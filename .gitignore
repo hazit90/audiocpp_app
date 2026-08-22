@@ -117,3 +117,18 @@ app.*.symbols
 !**/ios/**/default.perspectivev3
 !/packages/flutter_tools/test/data/dart_dependencies_test/**/.packages
 !/dev/ci/**/Gemfile.lock
+# --- audiocpp_app ---
+
+# Native build trees for the audio.cpp FFI shim. Rebuilt by
+# packages/audiocpp/tool/build_macos.sh; never committed.
+packages/audiocpp/build/
+
+# Built shared libraries. Each developer builds their own against the pinned
+# audio.cpp commit, so a stale binary can never shadow a submodule bump.
+packages/audiocpp/macos/Libs/*.dylib
+packages/audiocpp/**/*.so
+packages/audiocpp/**/*.dll
+
+# Model packages are gigabytes and come from the model manager, not git.
+models/
+*.gguf

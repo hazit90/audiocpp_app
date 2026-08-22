@@ -1,0 +1,2 @@
+# Build output of tool/build_macos.sh. Rebuilt locally, never committed.
+*.dylib

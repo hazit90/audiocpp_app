@@ -1,0 +1,38 @@
+name: audiocpp_flutter
+description: "A new Flutter project."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # Local FFI package wrapping the audio.cpp submodule. Build its native library
+  # first: packages/audiocpp/tool/build_macos.sh
+  audiocpp:
+    path: ../packages/audiocpp
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter:
+  uses-material-design: true
+
+flutter_launcher_icons:
+  image_path: "assets/audiocpp_icon.png"
+  android: true
+  adaptive_icon_background: "#0A0A0C"
+  adaptive_icon_foreground: "assets/icon/audiocpp_icon_foreground.png"
+  adaptive_icon_monochrome: "assets/icon/audiocpp_icon_monochrome.png"
+  ios: true
+  remove_alpha_ios: true
+  macos:
+    generate: true
+  windows:
+    generate: true
+    icon_size: 256

@@ -1,0 +1,8 @@
+# Symbols exported from libaudiocpp_ffi.
+#
+# CXX_VISIBILITY_PRESET only governs sources compiled into this target. ggml,
+# sentencepiece and the engine's object libraries arrive as prebuilt static
+# archives with their own (default) visibility, so without this list ~2500
+# symbols leak out -- notably every ggml_* entry point, which would collide
+# with any other ggml-based library loaded into the same process.
+_audiocpp_*

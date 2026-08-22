@@ -1,0 +1,28 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    # ffigen output; regenerate rather than edit.
+    - lib/src/ffi/*.g.dart
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+  errors:
+    # A missing await around a native call means work silently overlapping the
+    # worker queue, so treat it as a build failure rather than a hint.
+    unawaited_futures: error
+
+linter:
+  rules:
+    - always_declare_return_types
+    - avoid_dynamic_calls
+    - cancel_subscriptions
+    - close_sinks
+    - comment_references
+    - directives_ordering
+    - prefer_final_locals
+    - prefer_single_quotes
+    - unawaited_futures
+    - unnecessary_lambdas
+    - use_super_parameters
