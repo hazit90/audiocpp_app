@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'src/music_generation_page.dart';
+import 'src/app_shell.dart';
 
 void main() {
   runApp(const AudioCppApp());
@@ -26,7 +26,7 @@ class AudioCppApp extends StatelessWidget {
         brightness: Brightness.dark,
         useMaterial3: true,
       ),
-      home: const MusicGenerationPage(),
+      home: const AppShell(),
     );
   }
 }

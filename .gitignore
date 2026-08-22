@@ -130,5 +130,8 @@ packages/audiocpp/**/*.so
 packages/audiocpp/**/*.dll
 
 # Model packages are gigabytes and come from the model manager, not git.
-models/
+# Anchored to the repo root: an unanchored "models/" also matches source
+# directories such as audiocpp_flutter/lib/src/models/, which silently dropped
+# the whole downloader from a commit.
+/models/
 *.gguf

@@ -8,6 +8,11 @@
 /// Start with `AudioCppEngine`.
 library;
 
+export 'src/catalog/model_option.dart'
+    show ModelOption, ModelOptionType, ModelOptions;
+export 'src/catalog/model_package.dart'
+    show DownloadKind, DownloadSource, ModelPackage, UnsafeModelPathException;
+export 'src/catalog/model_spec.dart' show ModelCatalog, ModelCategory, ModelSpec;
 export 'src/engine/audiocpp_engine.dart'
     show AudioCppEngine, AudioCppModel, AudioCppSession, GeneratedAudio;
 export 'src/exceptions.dart'
