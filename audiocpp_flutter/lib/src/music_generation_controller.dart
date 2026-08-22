@@ -4,63 +4,31 @@ import 'dart:io';
 import 'package:audiocpp/audiocpp.dart';
 import 'package:flutter/foundation.dart';
 
-/// Where the controller currently is in the load/generate lifecycle.
-enum GenerationStage {
-  /// Nothing started yet.
-  idle,
-
-  /// Worker isolate coming up.
-  startingEngine,
-
-  /// Reading the model package off disk.
-  loadingModel,
-
-  /// Model resident, ready to generate.
-  ready,
-
-  /// Inference in flight.
-  generating,
-
-  /// The last operation failed; see [MusicGenerationController.errorMessage].
-  failed,
-}
+import 'tracks/generation_engine.dart';
+import 'tracks/track.dart';
+import 'tracks/waveform.dart';
 
 /// Owns the audio.cpp engine for the app and exposes it as observable state.
 ///
 /// Model loading is deliberately separate from generation: loading MiniMax
 /// Music 3 is expensive, and keeping the session resident across runs is the
 /// difference between a few seconds and a few minutes per generation.
-class MusicGenerationController extends ChangeNotifier {
+class MusicGenerationController extends ChangeNotifier
+    implements GenerationEngine {
   AudioCppEngine? _engine;
   AudioCppModel? _model;
   AudioCppSession? _session;
 
-  GenerationStage _stage = GenerationStage.idle;
   String? _errorMessage;
   List<AudioCppDevice> _devices = const [];
   String? _loadedModelPath;
-  File? _lastOutput;
-  Duration? _lastOutputDuration;
 
-  GenerationStage get stage => _stage;
+  @override
   String? get errorMessage => _errorMessage;
-  List<AudioCppDevice> get devices => _devices;
 
   /// Path of the currently loaded model package, if any.
+  @override
   String? get loadedModelPath => _loadedModelPath;
-
-  /// WAV file written by the most recent successful generation.
-  File? get lastOutput => _lastOutput;
-
-  /// Playback length of [lastOutput].
-  Duration? get lastOutputDuration => _lastOutputDuration;
-
-  bool get isBusy =>
-      _stage == GenerationStage.startingEngine ||
-      _stage == GenerationStage.loadingModel ||
-      _stage == GenerationStage.generating;
-
-  bool get canGenerate => _stage == GenerationStage.ready;
 
   /// Starts the worker isolate and enumerates devices.
   ///
@@ -69,12 +37,12 @@ class MusicGenerationController extends ChangeNotifier {
     if (_engine != null) {
       return;
     }
-    _setStage(GenerationStage.startingEngine);
+    _beginWork();
     try {
       final engine = await AudioCppEngine.start();
       _engine = engine;
       _devices = await engine.listDevices();
-      _setStage(GenerationStage.idle);
+      notifyListeners();
     } on Object catch (error) {
       _fail(error);
     }
@@ -84,6 +52,7 @@ class MusicGenerationController extends ChangeNotifier {
   ///
   /// Replaces whatever was loaded before, releasing it first so two copies of a
   /// multi-gigabyte model are never resident at once.
+  @override
   Future<void> loadModel(String modelPath) async {
     await initialise();
     final engine = _engine;
@@ -91,7 +60,7 @@ class MusicGenerationController extends ChangeNotifier {
       return;
     }
 
-    _setStage(GenerationStage.loadingModel);
+    _beginWork();
     try {
       await _releaseModel();
 
@@ -119,53 +88,41 @@ class MusicGenerationController extends ChangeNotifier {
         ),
       );
       _loadedModelPath = modelPath;
-      _setStage(GenerationStage.ready);
+      notifyListeners();
     } on Object catch (error) {
       await _releaseModel();
       _fail(error);
     }
   }
 
-  /// Generates one track and writes it to a WAV file in the system temp dir.
-  Future<void> generate({
-    required String caption,
-    required String lyrics,
-    int durationSeconds = 30,
-    int inferenceSteps = 30,
-    int seed = 0,
+  /// Runs one request and writes the result to [output], returning its length.
+  ///
+  /// Unlike [generate] this rethrows: the queue needs to attribute a failure to
+  /// the track that caused it and carry on with the next one, which it cannot
+  /// do if the error is only reachable as controller state.
+  @override
+  Future<GenerationOutcome> runToFile({
+    required GenerationParams params,
+    required File output,
   }) async {
     final session = _session;
     if (session == null) {
-      _errorMessage = 'Load a model before generating.';
-      _stage = GenerationStage.failed;
-      notifyListeners();
-      return;
+      throw StateError('Load a model before generating.');
     }
 
-    _setStage(GenerationStage.generating);
+    _beginWork();
     GeneratedAudio? audio;
     try {
-      audio = await session.run(
-        MiniMaxMusic3Request(
-          caption: caption,
-          lyrics: lyrics,
-          durationSeconds: durationSeconds,
-          inferenceSteps: inferenceSteps,
-          seed: seed,
-        ),
-      );
-
-      final output = File(
-        '${Directory.systemTemp.path}/audiocpp_'
-        '${DateTime.now().millisecondsSinceEpoch}.wav',
-      );
+      audio = await session.run(params.toRequest());
+      await output.parent.create(recursive: true);
       await audio.writeWav(output.path);
-
-      _lastOutput = output;
-      _lastOutputDuration = audio.duration;
-      _setStage(GenerationStage.ready);
+      final duration = audio.duration;
+      final peaks = reducePeaks(await audio.readSamples());
+      notifyListeners();
+      return GenerationOutcome(duration: duration, peaks: peaks);
     } on Object catch (error) {
       _fail(error);
+      rethrow;
     } finally {
       // The native buffer is tens of megabytes; release it as soon as the file
       // is on disk rather than waiting for the next generation.
@@ -193,8 +150,13 @@ class MusicGenerationController extends ChangeNotifier {
     _loadedModelPath = null;
   }
 
-  void _setStage(GenerationStage stage) {
-    _stage = stage;
+  /// Clears the last error and announces the change.
+  ///
+  /// The controller used to track a lifecycle stage for the old single-shot
+  /// screen. The queue owns that state now — it knows what is running, queued
+  /// and failed per track — so all this has to do is not leave a stale error
+  /// hanging around.
+  void _beginWork() {
     _errorMessage = null;
     notifyListeners();
   }
@@ -203,7 +165,6 @@ class MusicGenerationController extends ChangeNotifier {
     // AudioCppNativeException carries the engine's own message, which names the
     // missing component or bad option; anything else falls back to toString.
     _errorMessage = error is AudioCppException ? error.message : error.toString();
-    _stage = GenerationStage.failed;
     notifyListeners();
   }
 

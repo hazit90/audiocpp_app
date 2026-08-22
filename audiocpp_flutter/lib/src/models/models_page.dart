@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:audiocpp/audiocpp.dart';
 import 'package:flutter/material.dart';
@@ -49,7 +50,7 @@ class _ModelsPageState extends State<ModelsPage> {
       return _CentredMessage(
         icon: Icons.error_outline,
         title: 'Catalogue unavailable',
-        body: '$error\n\nRun tool/sync_model_specs.sh and rebuild.',
+        body: '$error\n\nCheck assets/model_specs/ and rebuild.',
       );
     }
 
@@ -57,8 +58,8 @@ class _ModelsPageState extends State<ModelsPage> {
     if (families.isEmpty) {
       return const _CentredMessage(
         icon: Icons.inbox_outlined,
-        title: 'No music models in the catalogue',
-        body: 'The synced specs contain no music or SFX families.',
+        title: 'No models available',
+        body: 'No supported family is bundled with this build.',
       );
     }
 
@@ -106,12 +107,22 @@ class _StorageBar extends StatelessWidget {
               style: theme.textTheme.bodyMedium,
             ),
             const Spacer(),
-            Tooltip(
-              message: controller.storage.root.path,
-              child: Text(
-                'Change location in Settings',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+            // The path itself, not a pointer at a Settings screen that does
+            // not exist. Clicking it opens the folder, which is the thing
+            // anyone wanting to "change the location" is really after.
+            Flexible(
+              child: Tooltip(
+                message: controller.storage.root.path,
+                child: TextButton.icon(
+                  onPressed: () => Process.run(
+                    'open',
+                    <String>[controller.storage.root.path],
+                  ),
+                  icon: const Icon(Icons.folder_open, size: 15),
+                  label: Text(
+                    'Show in Finder',
+                    style: theme.textTheme.bodySmall,
+                  ),
                 ),
               ),
             ),

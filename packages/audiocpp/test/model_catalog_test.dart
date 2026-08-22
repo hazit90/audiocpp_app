@@ -157,8 +157,7 @@ void main() {
       final spec = catalog!.specForFamily('minimax_music3');
 
       expect(spec, isNotNull);
-      expect(spec!.isMusicOrSfx, isTrue);
-      expect(spec.category, ModelCategory.audioGeneration);
+      expect(spec!.category, ModelCategory.audioGeneration);
       expect(
         spec.packages.map((ModelPackage p) => p.id),
         containsAll(<String>['minimax_music3_q4_0', 'minimax_music3_q8_0']),
@@ -187,17 +186,6 @@ void main() {
       expect(options.findRequest('guidance_scale')?.defaultValue, '1.7');
     }, skip: skip);
 
-    test('music and SFX filter selects the generation families', () {
-      final families = catalog!.musicAndSfx.map((ModelSpec s) => s.family).toSet();
-
-      expect(
-        families,
-        containsAll(<String>['minimax_music3', 'stable_audio', 'ace_step']),
-      );
-      // ASR families must not leak into a music app's catalogue.
-      expect(families, isNot(contains('qwen3_asr')));
-      expect(families, isNot(contains('silero_vad')));
-    }, skip: skip);
 
     test('Stable Audio offers a dedicated SFX package', () {
       final spec = catalog!.specForFamily('stable_audio')!;

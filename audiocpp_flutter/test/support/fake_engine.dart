@@ -1,0 +1,73 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:audiocpp_flutter/src/tracks/generation_engine.dart';
+import 'package:audiocpp_flutter/src/tracks/track.dart';
+
+/// A stand-in for the engine.
+///
+/// Generation is the one thing that cannot be exercised for real here — there
+/// is no dylib on the test VM and a run takes minutes — so the fake reproduces
+/// only what the queue depends on: it blocks until released, and it fails when
+/// told to.
+final class FakeEngine implements GenerationEngine {
+  @override
+  String? loadedModelPath;
+
+  @override
+  String? errorMessage;
+
+  final List<String> loads = <String>[];
+  final List<GenerationParams> runs = <GenerationParams>[];
+
+  /// Runs to fail, matched against the caption as a substring.
+  final Set<String> failCaptions = <String>{};
+
+  /// Set to make [loadModel] a no-op that leaves nothing resident.
+  bool loadSilentlyFails = false;
+
+  Duration produced = const Duration(seconds: 32);
+
+  /// Peaks handed back with each successful run.
+  List<int> producedPeaks = const <int>[0, 128, 255, 64];
+
+  Completer<void>? _gate;
+
+  /// Makes the next run block until [release] is called.
+  void hold() => _gate = Completer<void>();
+
+  void release() {
+    _gate?.complete();
+    _gate = null;
+  }
+
+  @override
+  Future<void> loadModel(String modelPath) async {
+    loads.add(modelPath);
+    if (loadSilentlyFails) {
+      errorMessage = 'no such package';
+      return;
+    }
+    loadedModelPath = modelPath;
+  }
+
+  @override
+  Future<GenerationOutcome> runToFile({
+    required GenerationParams params,
+    required File output,
+  }) async {
+    runs.add(params);
+    // Real elapsed time, so the queue's estimate has something to measure.
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    final gate = _gate;
+    if (gate != null) {
+      await gate.future;
+    }
+    if (failCaptions.any(params.caption.contains)) {
+      throw StateError('out of memory during flow stage');
+    }
+    await output.parent.create(recursive: true);
+    await output.writeAsBytes(<int>[0, 1, 2]);
+    return GenerationOutcome(duration: produced, peaks: producedPeaks);
+  }
+}

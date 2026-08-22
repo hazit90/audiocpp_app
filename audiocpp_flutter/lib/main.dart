@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'src/app_shell.dart';
+import 'src/theme/app_theme.dart';
 
 void main() {
   runApp(const AudioCppApp());
@@ -17,15 +18,11 @@ class AudioCppApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'audio.cpp',
-      theme: ThemeData(
-        colorSchemeSeed: const Color(0xFF6750A4),
-        useMaterial3: true,
-      ),
-      darkTheme: ThemeData(
-        colorSchemeSeed: const Color(0xFF6750A4),
-        brightness: Brightness.dark,
-        useMaterial3: true,
-      ),
+      theme: AppTheme.light,
+      darkTheme: AppTheme.dark,
+      // Dark is the design target; light exists so a system-light machine is
+      // not unusable, not as an equal alternative.
+      themeMode: ThemeMode.dark,
       home: const AppShell(),
     );
   }

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart' show rootBundle;
 
 import 'model_downloader.dart';
 import 'model_storage.dart';
+import 'supported_models.dart';
 
 /// Install state of one package, as shown in the Models screen.
 enum InstallState {
@@ -76,7 +77,10 @@ final class ModelLibraryController extends ChangeNotifier {
     required this.downloader,
   });
 
-  /// Directory the specs are synced into by `tool/sync_model_specs.sh`.
+  /// Directory holding the specs bundled with the app.
+  ///
+  /// Curated by hand from `third_party/audio.cpp/model_specs/` — only families
+  /// listed in [kSupportedFamilies] are copied here.
   static const String specsAssetDirectory = 'assets/model_specs';
 
   final ModelStorage storage;
@@ -94,8 +98,13 @@ final class ModelLibraryController extends ChangeNotifier {
   bool get isLoading => _loading;
   String? get loadError => _loadError;
 
-  /// Families this app offers, which is music and SFX generation only.
-  List<ModelSpec> get families => _catalog.musicAndSfx;
+  /// Families this app offers.
+  ///
+  /// Filtered against [kSupportedFamilies] as well as the bundled specs, so a
+  /// spec copied in before its request type exists still does not appear.
+  List<ModelSpec> get families => _catalog.specs
+      .where((ModelSpec spec) => kSupportedFamilies.contains(spec.family))
+      .toList(growable: false);
 
   PackageStatus? statusFor(String packageId) => _statuses[packageId];
 

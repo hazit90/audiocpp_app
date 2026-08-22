@@ -15,6 +15,9 @@ dependencies:
     path: ../packages/audiocpp
   path: ^1.9.1
   path_provider: ^2.1.5
+  # Playback of the WAVs we generate. macOS/iOS/Android all covered by one
+  # package; writing this per-platform is far more code than it is worth.
+  just_audio: ^0.9.42
 
 dev_dependencies:
   flutter_test:
@@ -25,7 +28,8 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    # Synced from the submodule by tool/sync_model_specs.sh -- never edited here.
+    # Curated by hand from third_party/audio.cpp/model_specs/ -- only families
+    # listed in lib/src/models/supported_models.dart are copied in.
     - assets/model_specs/
 
 flutter_launcher_icons:

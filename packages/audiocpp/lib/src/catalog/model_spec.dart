@@ -104,8 +104,6 @@ final class ModelSpec {
 
   final String? recommendedPackageId;
 
-  /// True when the family generates music or sound effects.
-  bool get isMusicOrSfx => tasks.contains('music') || tasks.contains('sfx');
 
   /// Packages that can actually be downloaded.
   List<ModelPackage> get fetchablePackages =>
@@ -166,10 +164,6 @@ final class ModelCatalog {
 
   final List<ModelSpec> specs;
 
-  /// Families that generate music or sound effects, which is all this app
-  /// currently offers.
-  List<ModelSpec> get musicAndSfx =>
-      specs.where((ModelSpec s) => s.isMusicOrSfx).toList(growable: false);
 
   ModelSpec? specForFamily(String family) {
     for (final spec in specs) {
