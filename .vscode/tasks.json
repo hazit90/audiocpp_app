@@ -1,0 +1,32 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // Runs before every launch (see launch.json "preLaunchTask").
+      //
+      // Initialises the audio.cpp submodule, fetches Dart packages, and rebuilds
+      // libaudiocpp_ffi.dylib when it is missing or stale. Without this, a build
+      // silently succeeds without the native library and only fails at runtime.
+      //
+      // No-ops in well under a second when nothing has changed.
+      "label": "audiocpp: setup macOS",
+      "type": "shell",
+      "command": "${workspaceFolder}/packages/audiocpp/tool/setup_macos.sh",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      // Same, but forces a native rebuild. Use after changing build flags.
+      "label": "audiocpp: rebuild native library",
+      "type": "shell",
+      "command": "${workspaceFolder}/packages/audiocpp/tool/setup_macos.sh",
+      "options": { "env": { "FORCE": "1" } },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    }
+  ]
+}

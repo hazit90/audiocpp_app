@@ -29,6 +29,23 @@ for use from Dart via dart:ffi.
 
   s.vendored_libraries = 'Libs/libaudiocpp_ffi.dylib'
 
+  # Safety net for builds that did not go through tool/setup_macos.sh (a plain
+  # `flutter build`, Xcode, CI). Without it a missing dylib is not an error:
+  # the glob above matches nothing, the app builds clean, and the failure only
+  # appears at runtime as a "library not found" message.
+  s.script_phase = {
+    :name => 'Verify audiocpp native library',
+    :execution_position => :before_compile,
+    :script => <<-SCRIPT
+      LIB="${PODS_TARGET_SRCROOT}/Libs/libaudiocpp_ffi.dylib"
+      if [ ! -f "${LIB}" ]; then
+        echo "error: libaudiocpp_ffi.dylib is missing."
+        echo "error: build it with packages/audiocpp/tool/setup_macos.sh, then build again."
+        exit 1
+      fi
+    SCRIPT
+  }
+
   s.swift_version    = '5.0'
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',

@@ -84,3 +84,15 @@ cp "${DYLIB}" "${OUTPUT_DIR}/libaudiocpp_ffi.dylib"
 
 echo "==> installed ${OUTPUT_DIR}/libaudiocpp_ffi.dylib"
 ls -lh "${OUTPUT_DIR}/libaudiocpp_ffi.dylib"
+
+# The podspec vendors this dylib through a glob that CocoaPods resolves at
+# `pod install` time. If an earlier install ran while the file was missing, the
+# Pods project has no reference to it and `flutter build` will happily produce
+# an app without it -- no warning, failing only at runtime. Flutter re-runs
+# `pod install` when Podfile.lock and Pods/Manifest.lock disagree, so dropping
+# the manifest here forces the vendoring to be re-resolved against reality.
+MANIFEST="${REPO_ROOT}/audiocpp_flutter/macos/Pods/Manifest.lock"
+if [[ -f "${MANIFEST}" ]]; then
+  rm -f "${MANIFEST}"
+  echo "==> invalidated CocoaPods manifest so the dylib gets re-vendored"
+fi

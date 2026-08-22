@@ -1,0 +1,34 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Default target for the "Start Debugging" button. The preLaunchTask
+      // guarantees the native library exists and is current before Flutter
+      // builds, which is what makes a fresh clone work with no manual steps.
+      "name": "audiocpp_flutter (debug)",
+      "type": "dart",
+      "request": "launch",
+      "program": "audiocpp_flutter/lib/main.dart",
+      "cwd": "audiocpp_flutter",
+      "preLaunchTask": "audiocpp: setup macOS"
+    },
+    {
+      "name": "audiocpp_flutter (profile)",
+      "type": "dart",
+      "request": "launch",
+      "flutterMode": "profile",
+      "program": "audiocpp_flutter/lib/main.dart",
+      "cwd": "audiocpp_flutter",
+      "preLaunchTask": "audiocpp: setup macOS"
+    },
+    {
+      "name": "audiocpp_flutter (release)",
+      "type": "dart",
+      "request": "launch",
+      "flutterMode": "release",
+      "program": "audiocpp_flutter/lib/main.dart",
+      "cwd": "audiocpp_flutter",
+      "preLaunchTask": "audiocpp: setup macOS"
+    }
+  ]
+}
