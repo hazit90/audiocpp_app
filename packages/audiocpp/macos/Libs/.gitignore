@@ -1,2 +1,5 @@
 # Build output of tool/build_macos.sh. Rebuilt locally, never committed.
 *.dylib
+
+# Staleness marker written by tool/setup_macos.sh.
+.build-stamp

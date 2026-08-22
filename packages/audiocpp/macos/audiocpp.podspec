@@ -36,6 +36,10 @@ for use from Dart via dart:ffi.
   s.script_phase = {
     :name => 'Verify audiocpp native library',
     :execution_position => :before_compile,
+    # The check is a single `test -f`, so running it every build is free.
+    # Declaring it always-out-of-date is what stops Xcode warning about a
+    # script phase with no declared outputs.
+    :always_out_of_date => '1',
     :script => <<-SCRIPT
       LIB="${PODS_TARGET_SRCROOT}/Libs/libaudiocpp_ffi.dylib"
       if [ ! -f "${LIB}" ]; then
