@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:audiocpp/audiocpp.dart';
 import 'package:audiocpp_flutter/src/library/library_pane.dart';
 import 'package:audiocpp_flutter/src/player/playback_controller.dart';
 import 'package:audiocpp_flutter/src/theme/app_theme.dart';
@@ -148,6 +149,30 @@ void main() {
     expect(find.text('UP NEXT · 1'), findsOneWidget);
     // The running track gets the strip at the top rather than a plain row.
     expect(find.text('Generating'), findsOneWidget);
+  });
+
+  testWidgets('the strip names the phase and how far in it is',
+      (WidgetTester tester) async {
+    engine.hold();
+    await enqueue(tester, 'first');
+    await started(tester);
+    await show(tester);
+
+    // Nothing reported yet, so the generic word and no number: a percentage
+    // invented before the engine has said anything would be a lie.
+    expect(find.text('Generating'), findsOneWidget);
+
+    engine.reportProgress(GenerationPhase.flow, done: 105, total: 210);
+    // The queue reads progress on its one-second ticker, as the app does.
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 1100)),
+    );
+    await tester.pump();
+
+    // Denoising, and past the point where the bar has to be well in.
+    expect(find.textContaining('Rendering'), findsOneWidget);
+    expect(find.textContaining('%'), findsOneWidget);
+    expect(find.text('Generating'), findsNothing);
   });
 
   testWidgets('discarding a running track takes it out of the library at once',

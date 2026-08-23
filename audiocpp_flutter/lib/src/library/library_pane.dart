@@ -377,6 +377,10 @@ class _RunningStrip extends StatelessWidget {
     final paused = queue.isRunPaused;
     final progress = queue.runningProgress;
     final phase = queue.runningPhase;
+    // Floored rather than rounded, so it cannot read 100% while the run is
+    // still going: the last phase sets the fraction to exactly 1, and nothing
+    // before it should be allowed to round up into that.
+    final percent = progress == null ? null : (progress * 100).floor();
 
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
@@ -390,7 +394,10 @@ class _RunningStrip extends StatelessWidget {
             children: <Widget>[
               Expanded(
                 child: Text(
-                  paused ? 'Paused' : phaseLabel(phase),
+                  <String>[
+                    paused ? 'Paused' : phaseLabel(phase),
+                    if (percent != null) '$percent%',
+                  ].join(' · '),
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: paused
                         ? theme.colorScheme.onSurfaceVariant
