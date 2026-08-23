@@ -81,6 +81,13 @@ target_compile_definitions(audiocpp_ffi PRIVATE AUDIOCPP_FFI_BUILDING)
 # Only the AUDIOCPP_API entry points should be exported. Hiding the rest keeps
 # audio.cpp's and ggml's C++ symbols from leaking into the host process, where
 # they could collide with another ggml-based library.
+#
+# These presets are a no-op on MSVC, and deliberately so: Windows export is
+# opt-in via __declspec(dllexport) on AUDIOCPP_API (see include/audiocpp_ffi.h),
+# so ggml's ~2500 symbols never reach the DLL's export table in the first place.
+# There is no Windows counterpart to audiocpp_ffi.exports and none is needed --
+# do not reach for WINDOWS_EXPORT_ALL_SYMBOLS, which would undo exactly the
+# firewall the export list exists to provide on macOS.
 set_target_properties(audiocpp_ffi PROPERTIES
     C_VISIBILITY_PRESET hidden
     CXX_VISIBILITY_PRESET hidden
@@ -117,4 +124,8 @@ if (AUDIOCPP_FFI_STATIC)
     message(STATUS "audiocpp_ffi: static build, host must -force_load the archive")
 endif()
 
-install(TARGETS audiocpp_ffi LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
+# RUNTIME catches the Windows DLL, ARCHIVE its import library.
+install(TARGETS audiocpp_ffi
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+    RUNTIME DESTINATION bin)

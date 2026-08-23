@@ -13,6 +13,12 @@
 #include "engine/framework/runtime/registry.h"
 #include "engine/framework/runtime/session.h"
 
+#if defined(_WIN32)
+#  define WIN32_LEAN_AND_MEAN
+#  define NOMINMAX
+#  include <windows.h>
+#endif
+
 #include <exception>
 #include <filesystem>
 #include <memory>
@@ -89,6 +95,41 @@ std::optional<std::string> to_optional_string(const char * value) {
         return std::nullopt;
     }
     return std::string(value);
+}
+
+// Builds a filesystem path from one of this ABI's UTF-8 strings.
+//
+// Never construct std::filesystem::path straight from a const char* here. The
+// narrow constructor decodes using the platform's native narrow encoding, which
+// on Windows is the active code page and not UTF-8 -- so any path outside ASCII
+// silently becomes the wrong path. It matters in practice: model and track
+// paths are rooted at the user's profile directory, so a single non-ASCII
+// character in an account name breaks model loading and WAV export.
+//
+// POSIX platforms already treat the bytes as-is, so there the widening is
+// skipped entirely rather than round-tripped.
+std::filesystem::path to_path(const char * utf8) {
+#if defined(_WIN32)
+    if (utf8 == nullptr || *utf8 == '\0') {
+        return std::filesystem::path{};
+    }
+    const int needed = ::MultiByteToWideChar(CP_UTF8, 0, utf8, -1, nullptr, 0);
+    if (needed <= 0) {
+        throw std::runtime_error("path is not valid UTF-8");
+    }
+    // `needed` counts the terminating null; the wstring must not.
+    std::wstring wide(static_cast<size_t>(needed - 1), L'\0');
+    if (::MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wide.data(), needed) <= 0) {
+        throw std::runtime_error("path is not valid UTF-8");
+    }
+    return std::filesystem::path(std::move(wide));
+#else
+    return std::filesystem::path(utf8 == nullptr ? "" : utf8);
+#endif
+}
+
+std::filesystem::path to_path(const std::string & utf8) {
+    return to_path(utf8.c_str());
 }
 
 engine::core::BackendType to_backend_type(int32_t backend) {
@@ -251,13 +292,13 @@ int32_t audiocpp_model_load(
         *out_model = nullptr;
 
         engine::runtime::ModelLoadRequest request;
-        request.model_path = std::filesystem::path(params->model_path);
+        request.model_path = to_path(params->model_path);
         request.family_hint = to_optional_string(params->family);
         request.config_id = to_optional_string(params->config_id);
         request.weight_id = to_optional_string(params->weight_id);
         request.options = to_option_map(params->load_options);
         if (const auto spec = to_optional_string(params->model_spec_override)) {
-            request.model_spec_override = std::filesystem::path(*spec);
+            request.model_spec_override = to_path(*spec);
         }
 
         auto handle = std::make_unique<audiocpp_model_t>();
@@ -434,7 +475,7 @@ int32_t audiocpp_audio_write_wav(const audiocpp_audio * audio, const char * path
             return AUDIOCPP_ERROR_INVALID_ARGUMENT;
         }
         engine::audio::write_pcm16_wav(
-            std::filesystem::path(path),
+            to_path(path),
             audio->buffer.sample_rate,
             audio->buffer.channels,
             audio->buffer.samples);

@@ -10,14 +10,18 @@ dependencies:
   flutter:
     sdk: flutter
   # Local FFI package wrapping the audio.cpp submodule. Build its native library
-  # first: packages/audiocpp/tool/build_macos.sh
+  # first: packages/audiocpp/tool/build_macos.sh, or tool/build_windows.ps1
   audiocpp:
     path: ../packages/audiocpp
   path: ^1.9.1
   path_provider: ^2.1.5
-  # Playback of the WAVs we generate. macOS/iOS/Android all covered by one
-  # package; writing this per-platform is far more code than it is worth.
-  just_audio: ^0.9.42
+  # Direct dart:ffi use in lib/src/platform/cpu_topology.dart, which asks
+  # Windows which cores are the fast ones on a hybrid CPU.
+  ffi: ^2.1.3
+  # Playback of the WAVs we generate. audioplayers rather than just_audio
+  # because just_audio has no Windows implementation, and neither does the
+  # audio_session package it pulls in.
+  audioplayers: ^6.1.0
 
 dev_dependencies:
   flutter_test:

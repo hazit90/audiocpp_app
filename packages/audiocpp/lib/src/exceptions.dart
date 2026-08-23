@@ -15,8 +15,9 @@ sealed class AudioCppException implements Exception {
 
 /// The native library could not be located or opened.
 ///
-/// Almost always means `packages/audiocpp/tool/build_macos.sh` has not been run,
-/// or the app bundle was built before the dylib existed.
+/// Almost always means the native build script for this platform has not been
+/// run — `tool/build_macos.sh`, or `tool/build_windows.ps1` — or the app bundle
+/// was built before its output existed.
 final class AudioCppLibraryNotFoundException extends AudioCppException {
   const AudioCppLibraryNotFoundException(super.message, {this.searchedPaths = const []});
 
@@ -32,7 +33,8 @@ final class AudioCppAbiMismatchException extends AudioCppException {
   }) : super(
           'libaudiocpp_ffi reports ABI major version $actualMajor, but this '
           'package was generated against $expectedMajor. Rebuild the native '
-          'library with tool/build_macos.sh.',
+          'library with the build script for this platform (tool/build_macos.sh '
+          'or tool/build_windows.ps1).',
         );
 
   final int expectedMajor;

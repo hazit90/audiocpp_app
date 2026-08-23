@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:audiocpp/audiocpp.dart';
 import 'package:flutter/foundation.dart';
 
+import 'platform/cpu_topology.dart';
 import 'tracks/generation_engine.dart';
 import 'tracks/track.dart';
 import 'tracks/waveform.dart';
@@ -136,11 +137,10 @@ class MusicGenerationController extends ChangeNotifier
     return hasGpu ? AudioCppBackend.bestAvailable : AudioCppBackend.cpu;
   }
 
-  /// Leave a couple of cores for the UI and the OS.
-  int get _preferredThreadCount {
-    final cores = Platform.numberOfProcessors;
-    return cores > 4 ? cores - 2 : cores;
-  }
+  /// Threads for the CPU backend, chosen for the CPU we are actually on.
+  ///
+  /// Hybrid CPUs need more than a core count — see [recommendedThreadCount].
+  int get _preferredThreadCount => recommendedThreadCount();
 
   Future<void> _releaseModel() async {
     await _session?.dispose();

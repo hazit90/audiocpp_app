@@ -1,9 +1,8 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../create/enqueue_button.dart' show formatDuration;
+import '../platform/reveal.dart';
 import '../player/playback_controller.dart';
 import '../theme/app_theme.dart';
 import '../tracks/failure_message.dart';
@@ -555,9 +554,7 @@ class _RowMenu extends StatelessWidget {
     if (file == null || !file.existsSync()) {
       return;
     }
-    // -R selects the file in a new Finder window rather than opening it in
-    // whatever is registered for WAV playback.
-    await Process.run('open', <String>['-R', file.path]);
+    await revealFile(file);
   }
 
   Future<void> _delete() async {
@@ -582,11 +579,11 @@ class _RowMenu extends StatelessWidget {
             onPressed: () => onRemix!(track),
             child: const Text('Remix these settings'),
           ),
-        if (track.hasAudio && Platform.isMacOS)
+        if (track.hasAudio && canRevealInFileManager)
           MenuItemButton(
             leadingIcon: const Icon(Icons.folder_open, size: 18),
             onPressed: () => _reveal(context),
-            child: const Text('Reveal in Finder'),
+            child: Text('Reveal in $fileManagerName'),
           ),
         if (track.status == TrackStatus.failed)
           MenuItemButton(

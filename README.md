@@ -85,6 +85,14 @@ Everything it does is also available from a terminal:
 cd audiocpp_flutter && flutter run -d macos
 ```
 
+On Windows the twin is `setup_windows.ps1`, from a **Visual Studio Developer
+PowerShell** so that `cl.exe` is on PATH:
+
+```powershell
+.\packages\audiocpp\tool\setup_windows.ps1
+cd audiocpp_flutter; flutter run -d windows
+```
+
 For iOS, `./packages/audiocpp/tool/setup_ios.sh` is the equivalent, then
 `flutter run` with a device selected. Read *Scope today* first: the port works,
 but no published MiniMax Music 3 package fits in an iOS process.
@@ -101,8 +109,11 @@ and exits in well under a second otherwise. A cold build is about 45 seconds.
 ## Getting a model
 
 Open **Models** in the app and download MiniMax Music 3. It installs into
-`<Application Support>/models/`, and Create picks it up with no path to type.
-Models are not in git — they are gigabytes.
+`<Application Support>/models/` — on Windows, `%LOCALAPPDATA%\hazit90\audiocpp_flutter\models`,
+deliberately the local profile rather than the roaming one `path_provider`
+would otherwise pick, because roaming several gigabytes is a bad idea on a
+domain-joined machine. Create picks it up with no path to type. Models are not
+in git — they are gigabytes.
 
 Only families listed in `audiocpp_flutter/lib/src/models/supported_models.dart`
 are offered. Availability is a decision, not a discovery: three things must
@@ -125,6 +136,13 @@ python3 tools/model_manager_v2.py install minimax_music3_q4_0
 - CMake. Ninja is optional but much faster than make on this tree.
 - For iOS: Xcode with the iOS platform installed, and a device on iOS 16.3 or
   newer — the same `std::to_chars` gate as macOS 13.3.
+- For Windows: Visual Studio Build Tools 2022 with the "Desktop development
+  with C++" workload (MSVC x64 plus the Windows SDK), CMake and Ninja. MSVC is
+  required rather than merely supported — audio.cpp's CMake has an `if (MSVC)`
+  branch for `/permissive-`, `/utf-8` and OpenMP that clang-cl does not trigger.
+- A CPU with AVX-VNNI for the Windows build as configured: Intel Alder Lake
+  (12th gen) or newer, or AMD Zen 5. Pass `-NoVnni` to `build_windows.ps1` for
+  anything older. See *Scope today*.
 
 ## Development
 
@@ -162,8 +180,24 @@ upstream is free to reshape.
 
 ## Scope today
 
-- macOS is the only platform that can currently generate a track. Windows and
-  Linux have no packaging; iOS has full packaging but no model that fits.
+- macOS is the platform verified to generate a track end to end. Linux has no
+  packaging; iOS has full packaging but no model that fits.
+- Windows has full packaging and is not yet verified on hardware — the port was
+  written on macOS, so the DLL has never been built and no track has been
+  generated there. Nothing in it is known-broken; nothing in it is proven
+  either. Treat the first run as the test.
+- Windows is CPU-only for now, tuned for Intel Core Ultra. The build takes an
+  explicit AVX2 baseline plus **AVX-VNNI**, which is not part of ggml's default
+  instruction group and has to be asked for — it is the largest single win on
+  the int8 dot products that dominate q4_0 matmul. AVX-512 is deliberately off:
+  no Core Ultra part has it, because Intel disabled it across the hybrid
+  P-core/E-core designs, so enabling it would build a binary that faults.
+  Threads are chosen from the OS's own core-efficiency classes rather than
+  `numberOfProcessors`, since ggml's per-node spin barrier makes a graph run at
+  the speed of its slowest thread and an E-core gates every node. Override with
+  `AUDIOCPP_THREADS` to tune. GPU acceleration on Windows is next; the ABI
+  already carries backend selection, so it is a compile-time flag rather than
+  new plumbing.
 - iOS builds, links and runs. The shim cross-compiles to a static
   `audiocpp.xcframework`, the engine initialises on device, enumerates Metal and
   resolves its embedded specs. Loading a model then fails with `std::bad_alloc`:

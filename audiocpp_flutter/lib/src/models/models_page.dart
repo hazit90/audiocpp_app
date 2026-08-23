@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:audiocpp/audiocpp.dart';
 import 'package:flutter/material.dart';
 
+import '../platform/reveal.dart';
 import 'model_downloader.dart';
 import 'model_library_controller.dart';
 import 'model_storage.dart';
@@ -110,22 +110,20 @@ class _StorageBar extends StatelessWidget {
             // The path itself, not a pointer at a Settings screen that does
             // not exist. Clicking it opens the folder, which is the thing
             // anyone wanting to "change the location" is really after.
-            Flexible(
-              child: Tooltip(
-                message: controller.storage.root.path,
-                child: TextButton.icon(
-                  onPressed: () => Process.run(
-                    'open',
-                    <String>[controller.storage.root.path],
-                  ),
-                  icon: const Icon(Icons.folder_open, size: 15),
-                  label: Text(
-                    'Show in Finder',
-                    style: theme.textTheme.bodySmall,
+            if (canRevealInFileManager)
+              Flexible(
+                child: Tooltip(
+                  message: controller.storage.root.path,
+                  child: TextButton.icon(
+                    onPressed: () => openDirectory(controller.storage.root),
+                    icon: const Icon(Icons.folder_open, size: 15),
+                    label: Text(
+                      'Show in $fileManagerName',
+                      style: theme.textTheme.bodySmall,
+                    ),
                   ),
                 ),
               ),
-            ),
           ],
         ),
       ),

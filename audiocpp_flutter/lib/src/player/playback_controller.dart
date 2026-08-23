@@ -1,16 +1,20 @@
 import 'dart:async';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
-import 'package:just_audio/just_audio.dart';
 
 import '../tracks/track.dart';
 import '../tracks/track_store.dart';
 
 /// Plays finished tracks.
 ///
-/// Deliberately thin over `just_audio`: it holds which track is loaded and
+/// Deliberately thin over `audioplayers`: it holds which track is loaded and
 /// exposes position as plain values, so widgets rebuild from one notifier
 /// instead of each subscribing to their own stream.
+///
+/// `audioplayers` rather than `just_audio` because just_audio has no Windows
+/// implementation, and neither does the `audio_session` package it depends on —
+/// constructing a player there throws `MissingPluginException`.
 ///
 /// Nothing here starts playback on its own — a queue draining for half an hour
 /// would otherwise interrupt whatever the user is listening to every few
@@ -36,27 +40,40 @@ final class PlaybackController extends ChangeNotifier {
     }
     final player = _injected ?? AudioPlayer();
     _player = player;
-    _subscriptions.add(player.positionStream.listen((Duration position) {
+    // The default release mode frees the platform resources once a track ends,
+    // which would make pressing play again a fresh load rather than a replay.
+    unawaited(player.setReleaseMode(ReleaseMode.stop));
+    _subscriptions.add(player.onPositionChanged.listen((Duration position) {
       _position = position;
       _notify();
     }));
-    _subscriptions.add(player.playerStateStream.listen((PlayerState state) {
-      _playing = state.playing;
-      if (state.processingState == ProcessingState.completed) {
-        // Leave the head at the start rather than at the end, so pressing play
-        // again replays instead of doing nothing.
-        unawaited(player.pause());
-        unawaited(player.seek(Duration.zero));
-      }
+    // audioplayers reports duration asynchronously once the decoder has read
+    // the header, so it arrives on a stream rather than as a property.
+    _subscriptions.add(player.onDurationChanged.listen((Duration duration) {
+      _duration = duration;
+      _notify();
+    }));
+    _subscriptions.add(player.onPlayerStateChanged.listen((PlayerState state) {
+      _playing = state == PlayerState.playing;
+      _notify();
+    }));
+    _subscriptions.add(player.onPlayerComplete.listen((void _) {
+      // Leave the head at the start rather than at the end, so pressing play
+      // again replays instead of doing nothing.
+      _playing = false;
+      _position = Duration.zero;
+      unawaited(player.seek(Duration.zero));
       _notify();
     }));
     return player;
   }
+
   final List<StreamSubscription<Object?>> _subscriptions =
       <StreamSubscription<Object?>>[];
 
   Track? _current;
   Duration _position = Duration.zero;
+  Duration? _duration;
   bool _playing = false;
   bool _disposed = false;
   String? _error;
@@ -69,8 +86,7 @@ final class PlaybackController extends ChangeNotifier {
   Duration get position => _position;
 
   /// Length of the loaded track, preferring what the player reports.
-  Duration get duration =>
-      _player?.duration ?? _current?.duration ?? Duration.zero;
+  Duration get duration => _duration ?? _current?.duration ?? Duration.zero;
 
   /// Why the last load failed, if it did.
   String? get error => _error;
@@ -107,10 +123,11 @@ final class PlaybackController extends ChangeNotifier {
       _error = null;
       _current = track;
       _position = Duration.zero;
+      // Fall back to the track's own duration until the decoder reports one.
+      _duration = null;
       _notify();
       final player = _ensurePlayer();
-      await player.setFilePath(file.path);
-      await player.play();
+      await player.play(DeviceFileSource(file.path));
     } on Object catch (error) {
       _error = '$error';
       _current = null;
@@ -126,7 +143,7 @@ final class PlaybackController extends ChangeNotifier {
     if (_playing) {
       await player.pause();
     } else {
-      await player.play();
+      await player.resume();
     }
   }
 
@@ -163,6 +180,7 @@ final class PlaybackController extends ChangeNotifier {
     _current = null;
     _playing = false;
     _position = Duration.zero;
+    _duration = null;
     await _player?.stop();
     _notify();
   }

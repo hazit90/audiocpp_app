@@ -27,6 +27,42 @@
       "options": { "env": { "FORCE": "1" } },
       "problemMatcher": [],
       "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      // The Windows twin of "audiocpp: setup macOS". Same contract: submodule,
+      // pub get, and a rebuild of audiocpp_ffi.dll only when it is stale.
+      //
+      // Needs cl.exe on PATH, so run VS Code from a Developer PowerShell (or
+      // point terminal.integrated.defaultProfile.windows at one). The script
+      // says so explicitly rather than failing inside CMake.
+      "label": "audiocpp: setup Windows",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "${workspaceFolder}/packages/audiocpp/tool/setup_windows.ps1"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      // Same, but forces a native rebuild. Use after changing build flags.
+      "label": "audiocpp: rebuild native library (Windows)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "${workspaceFolder}/packages/audiocpp/tool/setup_windows.ps1",
+        "-Force"
+      ],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
     }
   ]
 }

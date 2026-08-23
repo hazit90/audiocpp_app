@@ -221,6 +221,15 @@ final class ModelPackage {
     if (value.isEmpty || value == '.') {
       throw UnsafeModelPathException(value, '$label must not be empty');
     }
+    // A backslash is an ordinary character in a Hugging Face repo path but a
+    // separator to every Windows filesystem API, so `a\..\b` would pass a
+    // '/'-only check here and still escape the model directory once it reached
+    // dart:io. Reject the character outright rather than trying to normalise
+    // it: no legitimate remote path in any spec we ship contains one.
+    if (value.contains(r'\')) {
+      throw UnsafeModelPathException(
+          value, '$label must not contain a backslash');
+    }
     if (value.startsWith('/') || RegExp(r'^[A-Za-z]:').hasMatch(value)) {
       throw UnsafeModelPathException(value, '$label must be relative');
     }

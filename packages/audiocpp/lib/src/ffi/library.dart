@@ -30,7 +30,7 @@ abstract final class AudioCppLibrary {
     if (bindings == null) {
       throw AudioCppLibraryNotFoundException(
         'Could not open libaudiocpp_ffi. Build it with '
-        'packages/audiocpp/tool/build_macos.sh (or build_ios.sh), or set '
+        'packages/audiocpp/$_buildScriptName, or set '
         '$pathEnvironmentVariable to an existing binary.',
         searchedPaths: searched,
       );
@@ -70,6 +70,17 @@ abstract final class AudioCppLibrary {
   }
 
   static const String _processSentinel = ':process:';
+
+  /// The build script whose output this platform expects, for error messages.
+  static String get _buildScriptName {
+    if (Platform.isWindows) {
+      return 'tool/build_windows.ps1';
+    }
+    if (Platform.isIOS) {
+      return 'tool/build_ios.sh';
+    }
+    return 'tool/build_macos.sh';
+  }
 
   /// Path to the copy embedded in the running app bundle, or null when the
   /// process is not running from one (tests, `dart run`).
@@ -125,6 +136,8 @@ abstract final class AudioCppLibrary {
       yield 'packages/audiocpp/macos/Libs/libaudiocpp_ffi.dylib';
     } else if (Platform.isWindows) {
       yield 'audiocpp_ffi.dll';
+      // Where tool/build_windows.ps1 installs it, relative to a repo-root cwd.
+      yield r'packages\audiocpp\windows\Libs\audiocpp_ffi.dll';
     } else {
       yield 'libaudiocpp_ffi.so';
     }

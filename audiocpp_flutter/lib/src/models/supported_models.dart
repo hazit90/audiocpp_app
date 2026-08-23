@@ -4,8 +4,10 @@
 /// Three things have to agree before a family works, and this list is the one
 /// a person reads:
 ///
-///  1. it is linked into the native library — `AUDIOCPP_MODELS` in
-///     `packages/audiocpp/tool/build_macos.sh`;
+///  1. it is linked into the native library — `AUDIOCPP_MODELS`, which every
+///     platform's build script passes (`tool/build_macos.sh`,
+///     `tool/build_windows.ps1`, `tool/build_ios.sh`), so adding a family
+///     means changing all of them;
 ///  2. its spec is present in `assets/model_specs/`, copied by hand from
 ///     `third_party/audio.cpp/model_specs/`;
 ///  3. the Create pane knows how to build its request — today that is

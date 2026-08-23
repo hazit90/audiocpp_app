@@ -233,16 +233,7 @@ final class ModelDownloader {
         throw DownloadException('missing downloaded file: $remote');
       }
       await Directory(p.dirname(target.path)).create(recursive: true);
-      if (target.existsSync()) {
-        await target.delete();
-      }
-      try {
-        await staged.rename(target.path);
-      } on FileSystemException {
-        // Different filesystems: fall back to copy-then-delete.
-        await staged.copy(target.path);
-        await staged.delete();
-      }
+      await _promoteFile(staged, target);
     }
 
     final manifest = buildManifest(
@@ -255,6 +246,38 @@ final class ModelDownloader {
     );
     await manifest.write(storage.manifestFileFor(package));
     await storage.discardStaging(package);
+  }
+
+  /// Moves one staged file into its final place.
+  ///
+  /// Retries because of Windows. There, both the delete and the rename fail
+  /// with a sharing violation while anything holds a handle on the file, and
+  /// something routinely does — an antivirus scanner opens each newly written
+  /// file to scan it, which for a multi-gigabyte GGUF is not instant. The
+  /// failure is transient, so a few short waits turn a hard error into a pause
+  /// nobody notices. On macOS this loop runs exactly once.
+  static Future<void> _promoteFile(File staged, File target) async {
+    const attempts = 5;
+    for (var attempt = 1;; attempt++) {
+      try {
+        if (target.existsSync()) {
+          await target.delete();
+        }
+        try {
+          await staged.rename(target.path);
+        } on FileSystemException {
+          // Different filesystems: fall back to copy-then-delete.
+          await staged.copy(target.path);
+          await staged.delete();
+        }
+        return;
+      } on FileSystemException {
+        if (attempt >= attempts) {
+          rethrow;
+        }
+        await Future<void>.delayed(Duration(milliseconds: 200 * attempt));
+      }
+    }
   }
 
   /// Fetches one file, resuming from [resumeFrom] when the server allows it.

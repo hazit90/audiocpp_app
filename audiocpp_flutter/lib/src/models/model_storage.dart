@@ -15,12 +15,45 @@ final class ModelStorage {
   ModelStorage({required this.root});
 
   /// Resolves the default root, `<Application Support>/models`.
+  ///
+  /// Windows takes a different directory on purpose. There,
+  /// `getApplicationSupportDirectory()` resolves under `%APPDATA%`, which is the
+  /// *roaming* profile — a place Windows may try to synchronise to a file server
+  /// on domain-joined machines. A model package is several gigabytes, so it
+  /// belongs in `%LOCALAPPDATA%` instead. Tracks are small and stay put.
   static Future<ModelStorage> resolveDefault({String? overridePath}) async {
     if (overridePath != null && overridePath.isNotEmpty) {
       return ModelStorage(root: Directory(overridePath));
     }
     final support = await getApplicationSupportDirectory();
+    if (Platform.isWindows) {
+      final local = _windowsLocalAppDataEquivalent(support);
+      if (local != null) {
+        return ModelStorage(root: Directory(p.join(local, 'models')));
+      }
+    }
     return ModelStorage(root: Directory(p.join(support.path, 'models')));
+  }
+
+  /// Maps `%APPDATA%\<Company>\<Product>` onto its `%LOCALAPPDATA%` twin.
+  ///
+  /// Derived from the roaming path rather than composed from scratch so the
+  /// company and product names stay whatever `path_provider` read out of the
+  /// executable's version resource — they are not ours to guess.
+  ///
+  /// Returns null if the environment does not look as expected, in which case
+  /// the caller keeps the roaming path: a working app in the wrong directory
+  /// beats a broken one.
+  static String? _windowsLocalAppDataEquivalent(Directory support) {
+    final roaming = Platform.environment['APPDATA'];
+    final local = Platform.environment['LOCALAPPDATA'];
+    if (roaming == null || roaming.isEmpty || local == null || local.isEmpty) {
+      return null;
+    }
+    if (!p.isWithin(roaming, support.path)) {
+      return null;
+    }
+    return p.join(local, p.relative(support.path, from: roaming));
   }
 
   /// Directory holding every installed package.

@@ -10,6 +10,7 @@ audio inference), integrated via Dart FFI. See `README.md` for setup.
 | `third_party/audio.cpp` | Git submodule, pinned. **Never edit** — changes here are lost on update. Patch upstream or work around it in the shim. |
 | `packages/audiocpp/src/` | The C shim: `audiocpp_ffi.h` (ABI) + `audiocpp_ffi.cpp` + CMake. |
 | `packages/audiocpp/macos/`, `ios/` | Per-platform pods. macOS vendors a dylib, iOS an xcframework of static slices. |
+| `packages/audiocpp/windows/` | Flutter Windows plugin. Compiles nothing — it hands the prebuilt DLL to the runner via `audiocpp_bundled_libraries`. |
 | `packages/audiocpp/lib/` | Dart: generated bindings, `NativeBridge`, worker isolate, typed API. |
 | `audiocpp_flutter/lib/src/tracks/` | The app's core: `Track`, `TrackStore`, `GenerationQueue`, `GenerationEngine`. No widgets. |
 | `audiocpp_flutter/lib/src/` | The app: `create/`, `library/`, `player/`, `models/` panes over that core. |
@@ -37,6 +38,16 @@ nm -gU packages/audiocpp/macos/Libs/libaudiocpp_ffi.dylib | grep -c ' T '
 ```
 
 It should equal the number of `AUDIOCPP_API` functions.
+
+Windows needs no export list and must not grow one. `__declspec(dllexport)` is
+opt-in, so ggml's symbols never reach the DLL's export table in the first place
+— do not reach for `WINDOWS_EXPORT_ALL_SYMBOLS`, which would undo exactly the
+firewall the `.exports` file provides on macOS. `build_windows.ps1` runs the
+equivalent check itself, reading the expected count out of the header:
+
+```powershell
+dumpbin /exports packages\audiocpp\windows\Libs\audiocpp_ffi.dll | Select-String 'audiocpp_'
+```
 
 **iOS links the shim statically, and four things conspire to break that.**
 Each is silent -- the app builds clean and fails on device -- so all four live
@@ -72,6 +83,42 @@ upstream publishes. Raising the ceiling needs
 personal team cannot sign** -- Xcode refuses the profile outright. Everything
 else in the iOS port works; this is the only thing standing between the app and
 a generated track.
+
+**Windows is the macOS shape, not the iOS one.** A shared library built out of
+band and loaded by absolute path. None of the iOS machinery applies — no
+`-force_load`, no `-u` dead-strip roots, no libtool merge — because all of it
+exists to work around *static* linking. Three things are load-bearing and each
+is silent when wrong:
+
+1. `/utf-8` is required, not cosmetic. `src/community_models/inflect_v2/frontend.cpp`
+   has non-ASCII literals that MSVC otherwise decodes as the active code page.
+2. `/openmp:experimental` is required. MSVC's default `/openmp` implements only
+   OpenMP 2.0 and rejects the code. macOS passes `ENGINE_ENABLE_OPENMP=OFF`
+   solely because Apple clang ships no libomp; that reason does not apply here.
+3. `AUDIOCPP_MODELS` lives in *every* build script now. Adding a model family
+   means editing `build_macos.sh`, `build_windows.ps1` and `build_ios.sh`.
+
+**Never build a `std::filesystem::path` from a `const char *` in the shim.** Use
+`to_path()` in `audiocpp_ffi.cpp`. The ABI says its strings are UTF-8 and every
+Dart caller honours that, but MSVC's narrow `path` constructor decodes using the
+active code page instead — so a single non-ASCII character in a Windows account
+name silently breaks model loading and WAV export, because every model and track
+path is rooted at the user's profile directory.
+
+**Windows CPU flags are tuned for Intel Core Ultra, and one of them is a trap.**
+`GGML_AVX_VNNI=ON` is the big win and is *not* in ggml's `INS_ENB` default
+group, so it only happens if asked. `GGML_AVX512` must stay OFF: no Core Ultra
+part has AVX-512 — Intel disabled it across the hybrid P-core/E-core designs —
+so it looks like an upgrade and produces a binary that faults on the target
+machine. Note that enabling VNNI bakes the intrinsics in with no runtime check,
+making Alder Lake / Zen 5 a hard floor; `build_windows.ps1 -NoVnni` opts out.
+
+**Thread count is not a core count on a hybrid CPU.** ggml synchronises workers
+at every graph node with a spin barrier, so a graph runs at the speed of its
+slowest thread and an E-core gates every node. `lib/src/platform/cpu_topology.dart`
+asks Windows for the per-core efficiency class and uses only the fastest class.
+It fails soft to the old heuristic, and `AUDIOCPP_THREADS` overrides it — which
+is the honest way to tune, since the right number is measurable.
 
 **Bump the ABI version on a breaking change.** `AUDIOCPP_FFI_ABI_VERSION_MAJOR`
 in the header and `AudioCppLibrary.expectedAbiMajor` in
@@ -132,6 +179,9 @@ flutter test
 
 `./tool/setup_ios.sh` is the iOS twin, same staleness contract. It builds a
 device slice only; `SIMULATOR=1` adds a simulator one.
+`.\tool\setup_windows.ps1` is the Windows twin, and needs a Visual Studio
+Developer PowerShell so `cl.exe` is on PATH — it checks and says so rather than
+failing inside CMake.
 
 ## Build settings that are load-bearing
 

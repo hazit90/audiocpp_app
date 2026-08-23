@@ -1,0 +1,8 @@
+# Build output of tool/build_windows.ps1. Rebuilt locally, never committed.
+*.dll
+*.lib
+*.pdb
+*.exp
+
+# Staleness marker written by tool/setup_windows.ps1.
+.build-stamp
