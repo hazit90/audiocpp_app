@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:math' as math;
 
+import 'package:audiocpp/audiocpp.dart';
 import 'package:flutter/foundation.dart';
 
 import 'generation_engine.dart';
+import 'phase_rates.dart';
 import 'track.dart';
 import 'track_store.dart';
 
@@ -87,14 +90,37 @@ final class GenerationQueue extends ChangeNotifier {
   Timer? _ticker;
   bool _disposed = false;
 
-  /// Wall-clock cost of the last successful run, used for the estimate. Only
-  /// the most recent is kept: it was measured on this machine, with this model
-  /// resident, which is what makes it worth anything.
+  /// Per-phase costs, by model package, as last measured on this machine.
   ///
-  /// Persisted through the store, so the first generation after a restart gets
-  /// an estimate too — the measurement is a property of the machine, and a run
-  /// costs minutes, which is exactly when a number is worth having.
-  TimingSample? _lastRun;
+  /// Persisted through the store, so the first generation after a restart is
+  /// paced as well as the last one was. A package with no entry falls back to
+  /// [PhaseRates.seed] rather than to nothing: the ratios between phases belong
+  /// to the model, and the absolute scale is corrected from the run in flight
+  /// within seconds of it starting.
+  Map<String, PhaseRates> _rates = const <String, PhaseRates>{};
+
+  /// Last reading from the engine that belongs to the run in flight.
+  ProgressSnapshot? _progress;
+
+  /// The engine's serial for this run, adopted from the first reading.
+  ///
+  /// Polling is asynchronous to starting and finishing a run, so without this
+  /// the tail of the previous run gets rendered as the opening of this one.
+  int? _runSerial;
+
+  /// Unit totals the engine has reported for this run, which beat prediction.
+  final Map<GenerationPhase, int> _liveTotals = <GenerationPhase, int>{};
+
+  /// What each finished phase of this run actually cost.
+  final Map<GenerationPhase, ({int units, Duration elapsed})> _observed =
+      <GenerationPhase, ({int units, Duration elapsed})>{};
+
+  /// Paused time already banked when the current phase began, so a pause is
+  /// not billed to the phase it happened in.
+  Duration _pausedAtPhaseStart = Duration.zero;
+
+  /// The bar's position, which only ever moves forward. See [runningProgress].
+  double _shownProgress = 0;
 
   /// Every track, newest first, exactly as the library shows them.
   List<Track> get tracks => store.tracks;
@@ -169,36 +195,101 @@ final class GenerationQueue extends ChangeNotifier {
         : _pausedTotal + DateTime.now().difference(since);
   }
 
-  /// Rough time left on the current generation.
+  /// How far through the current generation the engine says it is, 0..1.
   ///
-  /// There is no progress callback in the ABI, so this is an extrapolation from
-  /// the previous run scaled by steps × seconds, not a measurement. It is
-  /// deliberately absent until one run has completed rather than guessed.
-  Duration? get runningEstimatedRemaining {
-    final elapsed = runningElapsed;
-    final total = _estimateFor(_runningTrack?.params);
-    if (elapsed == null || total == null) {
+  /// Null when nothing is running, or when the engine is not reporting — an
+  /// older library or a family without report points — which the UI shows as an
+  /// indeterminate bar rather than as a run stuck at zero.
+  ///
+  /// Monotone. When a phase turns out to cost more than predicted the finished
+  /// segments are not renormalised, because a bar that goes backwards reads as
+  /// a bug; the error lands in [runningEstimatedRemaining] instead, which is
+  /// free to move in both directions.
+  double? get runningProgress {
+    if (_runningTrack == null || _progress == null) {
       return null;
     }
-    final remaining = total - elapsed;
-    return remaining.isNegative ? Duration.zero : remaining;
+    return _shownProgress;
+  }
+
+  /// Which stage the run is in, or null when nothing is being reported.
+  GenerationPhase? get runningPhase {
+    final snapshot = _progress;
+    if (_runningTrack == null || snapshot == null) {
+      return null;
+    }
+    return snapshot.phase;
+  }
+
+  /// Time left on the current generation.
+  ///
+  /// Measured, not extrapolated from a past run: the phase in flight is timed
+  /// against its own units, and the phases after it are scaled by how far off
+  /// the stored rate this machine is turning out to be right now.
+  ///
+  /// Falls back to the pre-run prediction until a phase has enough units behind
+  /// it to time, which is a few seconds rather than a whole first run.
+  Duration? get runningEstimatedRemaining {
+    final params = _runningTrack?.params;
+    if (params == null) {
+      return null;
+    }
+    final rates = _ratesForRunning();
+    final snapshot = _progress;
+    if (snapshot == null || !snapshot.isReporting) {
+      final elapsed = runningElapsed;
+      final total = rates.predictedTotal(params);
+      if (elapsed == null) {
+        return null;
+      }
+      final remaining = total - elapsed;
+      return remaining.isNegative ? Duration.zero : remaining;
+    }
+
+    final phase = snapshot.phase;
+    if (phase == GenerationPhase.finalizing) {
+      return Duration.zero;
+    }
+
+    final live = _liveRate(snapshot);
+    final stored = rates.rateFor(phase);
+    // How far off this machine is running right now, carried to the phases that
+    // have not started. They share a CPU and a thermal budget with this one, so
+    // whatever is slowing it down is the best guess for them too. Clamped
+    // because one anomalous phase should not produce an absurd total.
+    final drift = live != null && stored > 0
+        ? (live / stored).clamp(0.2, 5.0)
+        : 1.0;
+    final rate = live ?? stored;
+
+    var milliseconds =
+        math.max(0, snapshot.total - snapshot.done).toDouble() * rate;
+    var reached = false;
+    for (final later in PhaseRates.order) {
+      if (later == phase) {
+        reached = true;
+        continue;
+      }
+      if (!reached) {
+        continue;
+      }
+      milliseconds +=
+          _unitsFor(later, params, rates) * rates.rateFor(later) * drift;
+    }
+    return Duration(milliseconds: milliseconds.round());
   }
 
   /// Estimated wait before a track enqueued now would start.
-  Duration? get estimatedWait {
+  ///
+  /// Never null while anything is queued: every package has rates, measured or
+  /// shipped. A run being stopped still occupies the engine, so it still counts
+  /// towards the wait — hence the snapshot rather than what the store can still
+  /// see.
+  Duration get estimatedWait {
     var total = runningEstimatedRemaining ?? Duration.zero;
-    // A run being stopped still occupies the engine, so it still counts towards
-    // the wait — hence the snapshot rather than what the store can still see.
-    if (runningEstimatedRemaining == null && _runningTrack != null) {
-      return null;
-    }
     for (final track in pending) {
       if (track.status == TrackStatus.queued) {
-        final each = _estimateFor(track.params);
-        if (each == null) {
-          return null;
-        }
-        total += each;
+        total += _estimateFor(track.params, track.modelPackageId);
       }
     }
     return total;
@@ -210,7 +301,7 @@ final class GenerationQueue extends ChangeNotifier {
   /// store has already demoted whatever was mid-flight when the app died, so
   /// what survives here is genuinely work the user asked for and never got.
   void restore() {
-    _lastRun = store.readCalibration();
+    _rates = store.readCalibration();
     _nextQueueOrder = store.tracks
             .map((Track t) => t.queueOrder ?? 0)
             .fold<int>(0, (int a, int b) => a > b ? a : b) +
@@ -446,6 +537,12 @@ final class GenerationQueue extends ChangeNotifier {
     _runningStartedAt = DateTime.now();
     _pausedAt = null;
     _pausedTotal = Duration.zero;
+    _pausedAtPhaseStart = Duration.zero;
+    _progress = null;
+    _runSerial = null;
+    _shownProgress = 0;
+    _liveTotals.clear();
+    _observed.clear();
     _startTicker();
     await store.upsert(track.copyWith(status: TrackStatus.running));
     _notify();
@@ -471,11 +568,27 @@ final class GenerationQueue extends ChangeNotifier {
 
       // Recorded even when abandoned below: the work still happened, and the
       // next estimate is better for knowing what it cost.
-      _lastRun = TimingSample(
-        elapsed: DateTime.now().difference(_runningStartedAt!) - _pausedSoFar(),
-        workUnits: _workUnits(track.params),
-      );
-      await store.writeCalibration(_lastRun!);
+      //
+      // The last phase never sees a transition to close it out, so it is banked
+      // here from its final reading.
+      final last = _progress;
+      if (last != null && last.isReporting && last.done > 0) {
+        _observed[last.phase] = (
+          units: last.done,
+          elapsed: last.phaseElapsed - (_pausedSoFar() - _pausedAtPhaseStart),
+        );
+      }
+      if (_observed.isNotEmpty) {
+        final updated = _ratesFor(track.modelPackageId).blendedWith(
+          _observed,
+          durationSeconds: track.params.durationSeconds,
+        );
+        _rates = <String, PhaseRates>{
+          ..._rates,
+          track.modelPackageId: updated,
+        };
+        await store.writeCalibration(track.modelPackageId, updated);
+      }
 
       if (_abandoned.remove(track.id)) {
         // Already gone from the store — discarding removes the track up front.
@@ -563,20 +676,117 @@ final class GenerationQueue extends ChangeNotifier {
     }
   }
 
-  /// Cost proxy for the estimate: steps × seconds tracks runtime far better
-  /// than either alone, since both scale the flow stage roughly linearly.
-  int _workUnits(GenerationParams params) =>
-      params.inferenceSteps * params.durationSeconds;
+  /// Rates for a package, falling back to the shipped defaults.
+  PhaseRates _ratesFor(String packageId) =>
+      _rates[packageId] ?? PhaseRates.seed;
 
-  Duration? _estimateFor(GenerationParams? params) {
-    final sample = _lastRun;
-    if (params == null || sample == null || sample.workUnits == 0) {
+  PhaseRates _ratesForRunning() {
+    final track = _runningTrack;
+    return track == null ? PhaseRates.seed : _ratesFor(track.modelPackageId);
+  }
+
+  /// Units in a phase: what the engine reported if it has started, and the
+  /// prediction otherwise.
+  int _unitsFor(
+    GenerationPhase phase,
+    GenerationParams params,
+    PhaseRates rates,
+  ) =>
+      _liveTotals[phase] ?? rates.predictedUnits(phase, params);
+
+  /// Cost per unit of the phase in flight, from this run alone.
+  ///
+  /// Null until a couple of units are done: the first is measured from a phase
+  /// boundary the poll only approximates, and dividing by one of anything is
+  /// not a rate.
+  double? _liveRate(ProgressSnapshot snapshot) {
+    if (snapshot.done < 2) {
       return null;
     }
-    final scale = _workUnits(params) / sample.workUnits;
-    return Duration(
-      milliseconds: (sample.elapsed.inMilliseconds * scale).round(),
-    );
+    final paused = _pausedSoFar() - _pausedAtPhaseStart;
+    final elapsed = snapshot.phaseElapsed - paused;
+    if (elapsed <= Duration.zero) {
+      return null;
+    }
+    return elapsed.inMilliseconds / snapshot.done;
+  }
+
+  Duration _estimateFor(GenerationParams params, String packageId) =>
+      _ratesFor(packageId).predictedTotal(params);
+
+  /// Reads the engine's position and folds it into the bar and the estimate.
+  ///
+  /// Runs on the ticker rather than on a callback: the isolate that started the
+  /// run is blocked inside it, so anything pushed to its port would not be
+  /// delivered until the run it described had finished. See
+  /// [GenerationEngine.progress].
+  void _pollProgress() {
+    final track = _runningTrack;
+    if (track == null) {
+      return;
+    }
+    final snapshot = engine.progress;
+    if (snapshot == null || !snapshot.isReporting) {
+      return;
+    }
+    // The first reading of a run names it; everything after has to agree, or it
+    // belongs to a run this queue is not showing.
+    _runSerial ??= snapshot.runSerial;
+    if (snapshot.runSerial != _runSerial) {
+      return;
+    }
+
+    final previous = _progress;
+    if (previous != null && previous.phase != snapshot.phase) {
+      // Bank what the phase just finished actually cost. Its last reading is
+      // the closest thing to a measurement of it -- up to one poll short of the
+      // truth, against a phase that ran for minutes.
+      _observed[previous.phase] = (
+        units: previous.done,
+        elapsed: previous.phaseElapsed - (_pausedSoFar() - _pausedAtPhaseStart),
+      );
+      _pausedAtPhaseStart = _pausedSoFar();
+    }
+    _liveTotals[snapshot.phase] = snapshot.total;
+    _progress = snapshot;
+    _recomputeProgress(track.params);
+  }
+
+  /// Weights each phase by what it is predicted to cost and sums the finished
+  /// ones, so the bar advances in wall time rather than in units.
+  ///
+  /// Counting units directly would sprint through AR — thousands of cheap
+  /// frames — and then sit still through flow, which is three quarters of the
+  /// run in a fraction of the units.
+  void _recomputeProgress(GenerationParams params) {
+    final snapshot = _progress;
+    if (snapshot == null) {
+      return;
+    }
+    if (snapshot.phase == GenerationPhase.finalizing) {
+      _shownProgress = 1;
+      return;
+    }
+
+    final rates = _ratesForRunning();
+    var total = 0.0;
+    var done = 0.0;
+    var reached = false;
+    for (final phase in PhaseRates.order) {
+      final cost = _unitsFor(phase, params, rates) * rates.rateFor(phase);
+      total += cost;
+      if (phase == snapshot.phase) {
+        reached = true;
+        done += cost * (snapshot.phaseFraction ?? 0);
+      } else if (!reached) {
+        done += cost;
+      }
+    }
+    if (total <= 0) {
+      return;
+    }
+    // Only ever forward: see [runningProgress].
+    _shownProgress = math.max(_shownProgress, (done / total).clamp(0.0, 1.0));
   }
 
   /// Notifies unless the queue is gone.
@@ -599,14 +809,15 @@ final class GenerationQueue extends ChangeNotifier {
     return null;
   }
 
-  /// Drives the elapsed readout while a generation runs. There is nothing else
-  /// to notify on: the engine call is one opaque await lasting minutes.
+  /// Drives the elapsed readout and reads the engine's position while a
+  /// generation runs. The run itself is one await lasting minutes, so this is
+  /// the only thing that moves in the meantime.
   void _startTicker() {
     _ticker?.cancel();
-    _ticker = Timer.periodic(
-      const Duration(seconds: 1),
-      (Timer _) => notifyListeners(),
-    );
+    _ticker = Timer.periodic(const Duration(seconds: 1), (Timer _) {
+      _pollProgress();
+      notifyListeners();
+    });
   }
 
   void _stopTicker() {

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:audiocpp/audiocpp.dart';
 import 'package:audiocpp_flutter/src/tracks/generation_engine.dart';
 import 'package:audiocpp_flutter/src/tracks/track.dart';
 
@@ -45,6 +46,31 @@ final class FakeEngine implements GenerationEngine {
   /// How many times a cancel was asked for, so a test can tell "the queue
   /// called through" from "the run happened to end".
   int cancelRequests = 0;
+
+  /// What the next poll reports. Null is a library or family that says
+  /// nothing, which is what every test that does not care gets.
+  ProgressSnapshot? reportedProgress;
+
+  @override
+  ProgressSnapshot? get progress => reportedProgress;
+
+  /// Sets the next reading, defaulting the serial so a test only has to say
+  /// where in the run it wants to be.
+  void reportProgress(
+    GenerationPhase phase, {
+    required int done,
+    required int total,
+    Duration phaseElapsed = const Duration(seconds: 1),
+    int runSerial = 1,
+  }) {
+    reportedProgress = ProgressSnapshot(
+      phase: phase,
+      runSerial: runSerial,
+      done: done,
+      total: total,
+      phaseElapsed: phaseElapsed,
+    );
+  }
 
   /// Makes the next run block until [release] is called.
   void hold() => _gate = Completer<void>();

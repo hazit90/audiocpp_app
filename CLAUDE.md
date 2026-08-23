@@ -184,8 +184,28 @@ not information. So `_abandoned` stays as the backstop, the UI says
 cancelled run is `AUDIOCPP_CANCELLED` / `GenerationCancelled` -- never a
 failure, or the user gets an error they caused on purpose.
 
-There is still no step callback: elapsed time and an extrapolated estimate are
-all we can honestly show.
+**The bar is measured, and the rules that keep it honest.**
+`audiocpp_progress_query` returns a phase, a position inside it, and a serial
+identifying the run; `GenerationQueue` polls it on the ticker it already runs.
+Three things about turning that into a bar are easy to get wrong.
+
+It weights each phase by measured cost rather than counting units. AR is
+thousands of cheap frames and a fifth of a run, flow is three quarters of it in a
+fraction of the units, and those shares move with `inferenceSteps` -- 18/76/5 at
+30 steps, 10/86/3 at 60 -- so they can never be stored as fractions. It only
+moves forward: when a phase costs more than predicted the finished segments stay
+put and the error goes into the estimate, because a bar that rewinds reads as a
+bug. And a reading whose serial is not this run's is dropped, or the tail of the
+previous run renders as the opening of this one.
+
+Rates live in `phase_rates.dart`, persisted per model package, seeded from an
+M1 Max. Shipping one machine's numbers is deliberate: the ratio between phases
+belongs to the model, while the absolute scale corrects itself from the run in
+flight within seconds. The alternative -- what this replaced -- was no estimate
+at all until a first run had finished, and one that was ~25% short when it came.
+
+The weight upload reports no phase, so the first seconds of a run are still
+indeterminate.
 
 **Loading a model is free; the weights arrive inside `generate()`.**
 `registry.load` reads specs and opens files and measures 0s. The gigabytes land
@@ -212,8 +232,12 @@ would sit in its queue until the very run it was meant to stop had finished.
 `AudioCppEngine.requestCancel` therefore calls the library directly from the
 calling isolate. That is sound because Dart statics are per-isolate but `dlopen`
 is not: a second `AudioCppLibrary` handle resolves to the same loaded image, so
-both isolates see the same `std::atomic_bool` in the shim. Nothing is shared
+both isolates see the same `RunControl` in the shim. Nothing is shared
 across the port, so the no-pointers-across-isolates rule still holds.
+
+`audiocpp_progress_query` is read the same way and for the same reason, which is
+also why progress is polled rather than pushed: a callback would be delivered to
+the isolate blocked inside the run and arrive after the run it described.
 
 **Widgets never touch native handles or block.** Anything long-running goes
 through `GenerationQueue`, which talks to the narrow `GenerationEngine`

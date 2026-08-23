@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'phase_rates.dart';
 import 'track.dart';
 
 /// Persists generated tracks: one JSON index plus the WAV files beside it.
@@ -35,7 +36,12 @@ final class TrackStore {
   /// Schema of [calibrationFile], versioned separately from the index: the two
   /// files are read independently and a change to one must not invalidate the
   /// other.
-  static const int calibrationSchemaVersion = 1;
+  ///
+  /// 2 replaced a single whole-run sample with per-phase rates. An older file
+  /// is discarded rather than migrated -- it holds one number for a run whose
+  /// phases are now known to cost unrelated amounts, so there is nothing in it
+  /// worth carrying forward.
+  static const int calibrationSchemaVersion = 2;
 
   /// Directory holding [indexFile] and [audioDirectory].
   final Directory root;
@@ -44,11 +50,11 @@ final class TrackStore {
 
   Directory get audioDirectory => Directory(p.join(root.path, 'audio'));
 
-  /// Holds the timing sample the queue extrapolates its estimate from.
+  /// Holds the per-phase rates the queue predicts and paces a run from.
   ///
   /// Separate from the index rather than a field on it: it is a measurement of
   /// this machine, not part of the library, and a corrupt or missing one costs
-  /// nothing but the estimate.
+  /// nothing but the accuracy of an estimate that has a usable default anyway.
   File get calibrationFile => File(p.join(root.path, 'timing.json'));
 
   /// Tracks in memory, newest first. Empty until [load].
@@ -166,51 +172,60 @@ final class TrackStore {
     return removed;
   }
 
-  /// Reads the last recorded run cost, or null if there is none to trust.
+  /// Reads the recorded rates per model package, empty if there are none to
+  /// trust.
   ///
   /// Synchronous because the queue restores in one turn, before the first
-  /// frame; the file is two numbers.
-  TimingSample? readCalibration() {
+  /// frame; the file is a handful of numbers.
+  Map<String, PhaseRates> readCalibration() {
     try {
       if (!calibrationFile.existsSync()) {
-        return null;
+        return const <String, PhaseRates>{};
       }
       final decoded = jsonDecode(calibrationFile.readAsStringSync());
       if (decoded is! Map<String, Object?>) {
-        return null;
+        return const <String, PhaseRates>{};
       }
       if (decoded['schema_version'] != calibrationSchemaVersion) {
-        return null;
+        return const <String, PhaseRates>{};
       }
-      final elapsedMs = decoded['elapsed_ms'];
-      final workUnits = decoded['work_units'];
-      if (elapsedMs is! int || workUnits is! int) {
-        return null;
+      final packages = decoded['packages'];
+      if (packages is! Map<String, Object?>) {
+        return const <String, PhaseRates>{};
       }
-      if (elapsedMs <= 0 || workUnits <= 0) {
-        return null;
+      final out = <String, PhaseRates>{};
+      for (final entry in packages.entries) {
+        final value = entry.value;
+        if (value is Map<String, Object?>) {
+          out[entry.key] = PhaseRates.fromJson(value);
+        }
       }
-      return TimingSample(
-        elapsed: Duration(milliseconds: elapsedMs),
-        workUnits: workUnits,
-      );
+      return out;
     } on Object {
-      // An unreadable sample just means no estimate until the next run.
-      return null;
+      // Unreadable rates just mean the built-in defaults until the next run.
+      return const <String, PhaseRates>{};
     }
   }
 
-  /// Records the cost of a completed run, replacing any earlier sample.
+  /// Records the rates measured for one model package, leaving the others as
+  /// they were.
+  ///
+  /// Per package because the phases' costs belong to the model, not the
+  /// machine alone: a smaller family would otherwise inherit a larger one's
+  /// numbers and mis-pace its first run.
   ///
   /// Never throws: losing the estimate is not worth failing a generation that
   /// has already produced its audio.
-  Future<void> writeCalibration(TimingSample sample) async {
+  Future<void> writeCalibration(String packageId, PhaseRates rates) async {
     try {
       await root.create(recursive: true);
+      final existing = readCalibration();
       final payload = <String, Object?>{
         'schema_version': calibrationSchemaVersion,
-        'elapsed_ms': sample.elapsed.inMilliseconds,
-        'work_units': sample.workUnits,
+        'packages': <String, Object?>{
+          for (final entry in existing.entries) entry.key: entry.value.toJson(),
+          packageId: rates.toJson(),
+        },
         'recorded_at': DateTime.now().toIso8601String(),
       };
       final temporary =
@@ -297,15 +312,4 @@ final class TrackStore {
       List<Track>.of(tracks)..sort(
           (Track a, Track b) => b.createdAt.compareTo(a.createdAt),
         );
-}
-
-/// Wall-clock cost of one completed generation, against the work it did.
-///
-/// [workUnits] is the queue's cost proxy, kept opaque here: the store persists
-/// the pair, it does not decide what makes a run expensive.
-final class TimingSample {
-  const TimingSample({required this.elapsed, required this.workUnits});
-
-  final Duration elapsed;
-  final int workUnits;
 }

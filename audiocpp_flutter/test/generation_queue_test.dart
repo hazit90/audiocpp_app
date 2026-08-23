@@ -1,6 +1,8 @@
 import 'dart:io';
 
+import 'package:audiocpp/audiocpp.dart';
 import 'package:audiocpp_flutter/src/tracks/generation_queue.dart';
+import 'package:audiocpp_flutter/src/tracks/phase_rates.dart';
 import 'package:audiocpp_flutter/src/tracks/track.dart';
 import 'package:audiocpp_flutter/src/tracks/track_store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,6 +28,15 @@ Future<void> started(FakeEngine engine) async {
   for (var i = 0; i < 500 && engine.runs.isEmpty; i++) {
     await Future<void>.delayed(const Duration(milliseconds: 2));
   }
+}
+
+/// Waits for the queue's one-second ticker to poll the engine.
+///
+/// Progress is polled rather than pushed -- the isolate running a generation is
+/// blocked inside it -- so a test has to let the timer fire to see a reading
+/// land, exactly as the UI does.
+Future<void> ticked() async {
+  await Future<void>.delayed(const Duration(milliseconds: 1100));
 }
 
 /// Waits until the queue has nothing left to run. Bounded so a bug stalls one
@@ -527,15 +538,18 @@ void main() {
         <String>['running', 'c', 'b']);
   });
 
-  test('no estimate until a run has completed, then it grows with the queue',
+  test('an estimate exists from the first run, and grows with the queue',
       () async {
     engine.hold();
     await add('first');
     await pump();
 
-    // Nothing has been measured yet, so there is nothing honest to show.
-    expect(queue.runningEstimatedRemaining, isNull);
-    expect(queue.estimatedWait, isNull);
+    // Nothing has been measured on this machine yet. The phases' costs
+    // relative to each other are a property of the model rather than the
+    // hardware, so a shipped default is honest enough to show -- and the run in
+    // flight corrects the absolute scale within seconds of reporting.
+    expect(queue.runningEstimatedRemaining, isNotNull);
+    expect(queue.estimatedWait, greaterThan(Duration.zero));
 
     engine.release();
     await drained(queue);
@@ -549,10 +563,8 @@ void main() {
     await pump();
     final withTwo = queue.estimatedWait;
 
-    expect(withOne, isNotNull);
-    expect(withTwo, isNotNull);
-    // b is twice the work of a, so it must add more than nothing to the wait.
-    expect(withTwo!.inMilliseconds, greaterThan(withOne!.inMilliseconds));
+    // b doubles the denoising steps, and denoising is most of a run.
+    expect(withTwo.inMilliseconds, greaterThan(withOne.inMilliseconds));
 
     engine.release();
     await drained(queue);
@@ -589,9 +601,17 @@ void main() {
     queue2.dispose();
   });
 
-  test('the timing sample survives a restart, so the first run is estimated',
+  test('measured rates survive a restart, so the next run is paced by them',
       () async {
+    engine.hold();
     await add('first');
+    await started(engine);
+    // Rates are learned from what the engine reports, so a run that reported
+    // nothing teaches nothing -- there is no per-phase cost to infer from a
+    // single wall-clock number.
+    engine.reportProgress(GenerationPhase.ar, done: 400, total: 750);
+    await ticked();
+    engine.release();
     await drained(queue);
     expect(store.calibrationFile.existsSync(), isTrue);
 
@@ -625,6 +645,106 @@ void main() {
     engine2.release();
     await drained(queue2);
     queue2.dispose();
+  });
+
+  test('the bar weights phases by cost rather than counting units', () async {
+    engine.hold();
+    await add('first', steps: 30);
+    await started(engine);
+
+    // Nothing reported yet: indeterminate, not zero.
+    expect(queue.runningProgress, isNull);
+
+    // The whole AR phase, which is thousands of cheap units and a fifth of the
+    // run. Counting units would have this near the end already.
+    engine.reportProgress(GenerationPhase.ar, done: 750, total: 750);
+    await ticked();
+    final afterAr = queue.runningProgress;
+    expect(afterAr, isNotNull);
+    expect(afterAr, lessThan(0.35));
+    expect(afterAr, greaterThan(0.05));
+    expect(queue.runningPhase, GenerationPhase.ar);
+
+    // Halfway through denoising, which is most of the run.
+    engine.reportProgress(GenerationPhase.flow, done: 105, total: 210);
+    await ticked();
+    expect(queue.runningProgress, greaterThan(afterAr!));
+    expect(queue.runningProgress, greaterThan(0.4));
+
+    engine.release();
+    await drained(queue);
+  });
+
+  test('the bar never goes backwards', () async {
+    engine.hold();
+    await add('first', steps: 30);
+    await started(engine);
+
+    engine.reportProgress(GenerationPhase.flow, done: 200, total: 210);
+    await ticked();
+    final high = queue.runningProgress;
+    expect(high, isNotNull);
+
+    // A phase costing more than predicted re-weights the run. The finished
+    // segments are held where they are rather than renormalised, because a bar
+    // that rewinds reads as a bug; the estimate absorbs it instead.
+    engine.reportProgress(GenerationPhase.flow, done: 10, total: 2100);
+    await ticked();
+    expect(queue.runningProgress, greaterThanOrEqualTo(high!));
+
+    engine.release();
+    await drained(queue);
+  });
+
+  test('a reading from another run is ignored', () async {
+    engine.hold();
+    await add('first', steps: 30);
+    await started(engine);
+
+    engine.reportProgress(GenerationPhase.ar, done: 100, total: 750, runSerial: 4);
+    await ticked();
+    final mine = queue.runningProgress;
+    expect(mine, isNotNull);
+
+    // The engine's serial changes when a run starts. A reading carrying a
+    // different one is the tail of some other run, and rendering it would show
+    // this track as nearly finished the moment it began.
+    engine.reportProgress(
+      GenerationPhase.vocoder,
+      done: 6,
+      total: 7,
+      runSerial: 5,
+    );
+    await ticked();
+    expect(queue.runningProgress, mine);
+    expect(queue.runningPhase, GenerationPhase.ar);
+
+    engine.release();
+    await drained(queue);
+  });
+
+  test('rates are recorded per model package', () async {
+    engine.hold();
+    await add('first', steps: 30);
+    await started(engine);
+    engine.reportProgress(
+      GenerationPhase.ar,
+      done: 100,
+      total: 750,
+      phaseElapsed: const Duration(seconds: 50),
+    );
+    await ticked();
+    engine.release();
+    await drained(queue);
+
+    final recorded = store.readCalibration();
+    expect(recorded.keys, contains('minimax_music3_q4_0'));
+    // 50s over 100 frames is 500ms each, blended halfway with the shipped
+    // default -- so it must have moved well clear of the default alone.
+    expect(
+      recorded['minimax_music3_q4_0']!.arMsPerFrame,
+      greaterThan(PhaseRates.seed.arMsPerFrame * 1.5),
+    );
   });
 
   test('delete removes a track and its audio', () async {

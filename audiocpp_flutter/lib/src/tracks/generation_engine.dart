@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:audiocpp/audiocpp.dart';
 import 'package:flutter/foundation.dart';
 
 import 'track.dart';
@@ -62,6 +63,17 @@ abstract interface class GenerationEngine {
 
   /// Lets a paused run carry on. Harmless if it is not paused.
   void requestResume();
+
+  /// How far the run in flight has got, or null when there is nothing to say.
+  ///
+  /// A poll rather than a stream, and not because a stream would be harder to
+  /// write: the isolate that starts a run is blocked inside it for the whole
+  /// run, so pushed events would queue behind the very run they describe. The
+  /// queue reads this on the timer it already runs for the elapsed readout.
+  ///
+  /// Null for a library or model family that does not report, which the UI
+  /// shows as indeterminate rather than as a run stuck at zero.
+  ProgressSnapshot? get progress;
 }
 
 /// Raised by [GenerationEngine.runToFile] when the run was stopped on request.

@@ -1,3 +1,4 @@
+import 'package:audiocpp/audiocpp.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -335,6 +336,28 @@ class _QueuedRow extends StatelessWidget {
   }
 }
 
+/// The engine's phase in the user's vocabulary.
+///
+/// Deliberately not the engine's own names: "flow" and "vocoder" describe the
+/// architecture, and what a person waiting on a track wants is which part of
+/// making it is happening. Null -- nothing reported yet, or a family that does
+/// not report -- keeps the generic word rather than inventing a stage.
+String phaseLabel(GenerationPhase? phase) {
+  switch (phase) {
+    case GenerationPhase.ar:
+      return 'Composing';
+    case GenerationPhase.flow:
+      return 'Rendering';
+    case GenerationPhase.vocoder:
+      return 'Mixing down';
+    case GenerationPhase.finalizing:
+      return 'Finishing';
+    case GenerationPhase.unknown:
+    case null:
+      return 'Generating';
+  }
+}
+
 /// What the engine is doing right now.
 class _RunningStrip extends StatelessWidget {
   const _RunningStrip({required this.queue, required this.track});
@@ -352,6 +375,8 @@ class _RunningStrip extends StatelessWidget {
     final elapsed = queue.runningElapsed;
     final remaining = queue.runningEstimatedRemaining;
     final paused = queue.isRunPaused;
+    final progress = queue.runningProgress;
+    final phase = queue.runningPhase;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
@@ -365,7 +390,7 @@ class _RunningStrip extends StatelessWidget {
             children: <Widget>[
               Expanded(
                 child: Text(
-                  paused ? 'Paused' : 'Generating',
+                  paused ? 'Paused' : phaseLabel(phase),
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: paused
                         ? theme.colorScheme.onSurfaceVariant
@@ -377,8 +402,9 @@ class _RunningStrip extends StatelessWidget {
               Text(
                 <String>[
                   if (elapsed != null) formatDuration(elapsed),
-                  // No progress callback exists in the ABI, so anything beyond
-                  // elapsed time is an extrapolation and is labelled as one.
+                  // Still approximate even though the engine now reports its
+                  // position: the phases that have not started are predicted,
+                  // so the tilde stays.
                   if (remaining != null) '~${formatDuration(remaining)} left',
                 ].join(' · '),
                 style: theme.textTheme.bodySmall?.copyWith(
@@ -390,11 +416,13 @@ class _RunningStrip extends StatelessWidget {
           const SizedBox(height: 6),
           Text(track.title, overflow: TextOverflow.ellipsis),
           const SizedBox(height: 8),
-          // Determinate and unmoving while paused: an indeterminate bar keeps
-          // sweeping, which is the one thing a paused run must not look like.
+          // Determinate whenever the engine is reporting. It stops where it
+          // is while paused rather than sweeping, which is the one thing a
+          // paused run must not look like, and falls back to indeterminate for
+          // a model family that reports nothing.
           LinearProgressIndicator(
             minHeight: 3,
-            value: paused ? 0 : null,
+            value: paused ? (progress ?? 0) : progress,
             color: paused ? theme.colorScheme.onSurfaceVariant : null,
           ),
           const SizedBox(height: 4),
