@@ -87,7 +87,10 @@ class _CreatePageState extends State<CreatePage> {
   void didUpdateWidget(CreatePage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.remix != null && widget.remix != oldWidget.remix) {
-      _applyRemix();
+      // Deferred for the same reason as in initState: _applyRemix tells the
+      // shell to clear the pending remix, and that setState cannot run while
+      // the shell is building us.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _applyRemix());
     }
   }
 
