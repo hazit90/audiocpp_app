@@ -284,6 +284,44 @@ void main() {
     queue2.dispose();
   });
 
+  test('the timing sample survives a restart, so the first run is estimated',
+      () async {
+    await add('first');
+    await drained(queue);
+    expect(store.calibrationFile.existsSync(), isTrue);
+
+    // Simulate a restart over the same directory.
+    engine.release();
+    final reloaded = TrackStore(root: root);
+    await reloaded.load();
+    final engine2 = FakeEngine()..hold();
+    final queue2 = GenerationQueue(
+      store: reloaded,
+      engine: engine2,
+      resolveModelPath: (String id) async => '/models/$id',
+    );
+    queue2.restore();
+
+    await queue2.enqueue(
+      params: GenerationParams(
+        caption: 'after restart',
+        lyrics: '',
+        durationSeconds: 30,
+        inferenceSteps: 30,
+      ),
+      modelPackageId: 'model',
+      title: 'after restart',
+    );
+    await pump();
+
+    // Nothing has run in this session, but the machine's cost is known.
+    expect(queue2.runningEstimatedRemaining, isNotNull);
+
+    engine2.release();
+    await drained(queue2);
+    queue2.dispose();
+  });
+
   test('delete removes a track and its audio', () async {
     final track = await add('first');
     await drained(queue);

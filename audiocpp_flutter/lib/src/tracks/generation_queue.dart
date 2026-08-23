@@ -47,8 +47,11 @@ final class GenerationQueue extends ChangeNotifier {
   /// Wall-clock cost of the last successful run, used for the estimate. Only
   /// the most recent is kept: it was measured on this machine, with this model
   /// resident, which is what makes it worth anything.
-  Duration? _lastRunElapsed;
-  int? _lastRunWorkUnits;
+  ///
+  /// Persisted through the store, so the first generation after a restart gets
+  /// an estimate too — the measurement is a property of the machine, and a run
+  /// costs minutes, which is exactly when a number is worth having.
+  TimingSample? _lastRun;
 
   /// Every track, newest first, exactly as the library shows them.
   List<Track> get tracks => store.tracks;
@@ -126,6 +129,7 @@ final class GenerationQueue extends ChangeNotifier {
   /// store has already demoted whatever was mid-flight when the app died, so
   /// what survives here is genuinely work the user asked for and never got.
   void restore() {
+    _lastRun = store.readCalibration();
     _nextQueueOrder = store.tracks
             .map((Track t) => t.queueOrder ?? 0)
             .fold<int>(0, (int a, int b) => a > b ? a : b) +
@@ -305,9 +309,13 @@ final class GenerationQueue extends ChangeNotifier {
         output: store.audioFileFor(track.copyWith(audioFileName: fileName))!,
       );
 
-      final elapsed = DateTime.now().difference(_runningStartedAt!);
-      _lastRunElapsed = elapsed;
-      _lastRunWorkUnits = _workUnits(track.params);
+      // Recorded even when abandoned below: the work still happened, and the
+      // next estimate is better for knowing what it cost.
+      _lastRun = TimingSample(
+        elapsed: DateTime.now().difference(_runningStartedAt!),
+        workUnits: _workUnits(track.params),
+      );
+      await store.writeCalibration(_lastRun!);
 
       if (_abandoned.remove(track.id)) {
         // The user asked for this back when it could not be stopped. Honour it
@@ -370,14 +378,13 @@ final class GenerationQueue extends ChangeNotifier {
       params.inferenceSteps * params.durationSeconds;
 
   Duration? _estimateFor(GenerationParams? params) {
-    final elapsed = _lastRunElapsed;
-    final baseline = _lastRunWorkUnits;
-    if (params == null || elapsed == null || baseline == null || baseline == 0) {
+    final sample = _lastRun;
+    if (params == null || sample == null || sample.workUnits == 0) {
       return null;
     }
-    final scale = _workUnits(params) / baseline;
+    final scale = _workUnits(params) / sample.workUnits;
     return Duration(
-      milliseconds: (elapsed.inMilliseconds * scale).round(),
+      milliseconds: (sample.elapsed.inMilliseconds * scale).round(),
     );
   }
 

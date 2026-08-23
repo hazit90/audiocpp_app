@@ -32,12 +32,24 @@ final class TrackStore {
 
   static const int schemaVersion = 1;
 
+  /// Schema of [calibrationFile], versioned separately from the index: the two
+  /// files are read independently and a change to one must not invalidate the
+  /// other.
+  static const int calibrationSchemaVersion = 1;
+
   /// Directory holding [indexFile] and [audioDirectory].
   final Directory root;
 
   File get indexFile => File(p.join(root.path, 'index.json'));
 
   Directory get audioDirectory => Directory(p.join(root.path, 'audio'));
+
+  /// Holds the timing sample the queue extrapolates its estimate from.
+  ///
+  /// Separate from the index rather than a field on it: it is a measurement of
+  /// this machine, not part of the library, and a corrupt or missing one costs
+  /// nothing but the estimate.
+  File get calibrationFile => File(p.join(root.path, 'timing.json'));
 
   /// Tracks in memory, newest first. Empty until [load].
   List<Track> get tracks => List<Track>.unmodifiable(_tracks);
@@ -154,6 +166,65 @@ final class TrackStore {
     return removed;
   }
 
+  /// Reads the last recorded run cost, or null if there is none to trust.
+  ///
+  /// Synchronous because the queue restores in one turn, before the first
+  /// frame; the file is two numbers.
+  TimingSample? readCalibration() {
+    try {
+      if (!calibrationFile.existsSync()) {
+        return null;
+      }
+      final decoded = jsonDecode(calibrationFile.readAsStringSync());
+      if (decoded is! Map<String, Object?>) {
+        return null;
+      }
+      if (decoded['schema_version'] != calibrationSchemaVersion) {
+        return null;
+      }
+      final elapsedMs = decoded['elapsed_ms'];
+      final workUnits = decoded['work_units'];
+      if (elapsedMs is! int || workUnits is! int) {
+        return null;
+      }
+      if (elapsedMs <= 0 || workUnits <= 0) {
+        return null;
+      }
+      return TimingSample(
+        elapsed: Duration(milliseconds: elapsedMs),
+        workUnits: workUnits,
+      );
+    } on Object {
+      // An unreadable sample just means no estimate until the next run.
+      return null;
+    }
+  }
+
+  /// Records the cost of a completed run, replacing any earlier sample.
+  ///
+  /// Never throws: losing the estimate is not worth failing a generation that
+  /// has already produced its audio.
+  Future<void> writeCalibration(TimingSample sample) async {
+    try {
+      await root.create(recursive: true);
+      final payload = <String, Object?>{
+        'schema_version': calibrationSchemaVersion,
+        'elapsed_ms': sample.elapsed.inMilliseconds,
+        'work_units': sample.workUnits,
+        'recorded_at': DateTime.now().toIso8601String(),
+      };
+      final temporary =
+          File('${calibrationFile.path}.${_writeSequence++}.tmp');
+      await temporary.writeAsString(
+        '${const JsonEncoder.withIndent('  ').convert(payload)}\n',
+        flush: true,
+      );
+      await temporary.rename(calibrationFile.path);
+    } on Object {
+      // Ignored deliberately; see the doc comment.
+    }
+  }
+
   Future<List<Track>> _readIndex() async {
     try {
       if (!indexFile.existsSync()) {
@@ -226,4 +297,15 @@ final class TrackStore {
       List<Track>.of(tracks)..sort(
           (Track a, Track b) => b.createdAt.compareTo(a.createdAt),
         );
+}
+
+/// Wall-clock cost of one completed generation, against the work it did.
+///
+/// [workUnits] is the queue's cost proxy, kept opaque here: the store persists
+/// the pair, it does not decide what makes a run expensive.
+final class TimingSample {
+  const TimingSample({required this.elapsed, required this.workUnits});
+
+  final Duration elapsed;
+  final int workUnits;
 }
