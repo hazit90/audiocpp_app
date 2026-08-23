@@ -158,7 +158,11 @@ class _LibraryPaneState extends State<LibraryPane> {
           ),
         ),
         if (queue.running case final Track running)
-          _RunningStrip(queue: queue, track: running),
+          _RunningStrip(queue: queue, track: running)
+        // The discarded track is already gone; this is about the machine still
+        // being busy with it, which is why it carries no title and no controls.
+        else if (queue.isFinishingDiscarded)
+          _DiscardedStrip(queue: queue),
         if (queue.waitingCount > 0) _QueueSection(queue: queue),
         const Divider(),
         Expanded(
@@ -219,13 +223,30 @@ class _QueueSection extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-            child: Text(
-              'UP NEXT · ${waiting.length}',
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-                letterSpacing: 0.6,
-              ),
+            padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
+            child: Row(
+              children: <Widget>[
+                Text(
+                  'UP NEXT · ${waiting.length}',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+                const Spacer(),
+                // Clearing the queue is the only stop the app can honestly
+                // offer: what has started cannot be interrupted, but nothing
+                // after it has to happen.
+                TextButton(
+                  onPressed: queue.clearQueue,
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    foregroundColor: theme.colorScheme.onSurfaceVariant,
+                    textStyle: theme.textTheme.labelSmall,
+                  ),
+                  child: const Text('Clear'),
+                ),
+              ],
             ),
           ),
           Flexible(
@@ -330,7 +351,6 @@ class _RunningStrip extends StatelessWidget {
     final theme = Theme.of(context);
     final elapsed = queue.runningElapsed;
     final remaining = queue.runningEstimatedRemaining;
-    final abandoned = queue.isAbandoned(track.id);
 
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
@@ -342,7 +362,7 @@ class _RunningStrip extends StatelessWidget {
             children: <Widget>[
               Expanded(
                 child: Text(
-                  abandoned ? 'Finishing, then discarding' : 'Generating',
+                  'Generating',
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: AppTheme.accent,
                     letterSpacing: 0.6,
@@ -366,16 +386,81 @@ class _RunningStrip extends StatelessWidget {
           Text(track.title, overflow: TextOverflow.ellipsis),
           const SizedBox(height: 8),
           const LinearProgressIndicator(minHeight: 3),
-          if (!abandoned) ...<Widget>[
-            const SizedBox(height: 4),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: () => queue.cancel(track.id),
-                child: const Text('Discard when finished'),
-              ),
+          const SizedBox(height: 4),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: () => queue.cancel(track.id),
+              child: const Text('Discard'),
             ),
-          ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// What the engine is doing after the user gave up on it.
+///
+/// The track itself is gone the moment it is discarded, so nothing here names
+/// it. What is left to report is that the machine is not free yet, which is the
+/// part the user cannot see and would otherwise read as the app hanging.
+class _DiscardedStrip extends StatelessWidget {
+  const _DiscardedStrip({required this.queue});
+
+  final GenerationQueue queue;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final elapsed = queue.runningElapsed;
+    final remaining = queue.runningEstimatedRemaining;
+    final muted = theme.colorScheme.onSurfaceVariant;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+      // The raised panel colour rather than the accent tint the running strip
+      // uses: this still has to read as its own region, but it is no longer
+      // something the user is waiting on.
+      color: theme.colorScheme.surfaceContainerHighest,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  'Discarded',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: muted,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+              ),
+              Text(
+                <String>[
+                  if (elapsed != null) formatDuration(elapsed),
+                  if (remaining != null) '~${formatDuration(remaining)} left',
+                ].join(' · '),
+                style: theme.textTheme.bodySmall?.copyWith(color: muted),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            queue.waitingCount > 0
+                ? 'A generation cannot be interrupted. The next track starts '
+                    'when this one finishes.'
+                : 'A generation cannot be interrupted. The engine is finishing '
+                    'work that will be thrown away.',
+            style: theme.textTheme.bodySmall?.copyWith(color: muted),
+          ),
+          const SizedBox(height: 8),
+          LinearProgressIndicator(
+            minHeight: 3,
+            color: muted,
+            backgroundColor: muted.withValues(alpha: 0.15),
+          ),
         ],
       ),
     );

@@ -40,6 +40,13 @@ final class GenerationQueue extends ChangeNotifier {
   int _nextQueueOrder = 0;
   bool _draining = false;
   String? _runningId;
+
+  /// Snapshot of what is running, held here rather than read back off the store.
+  ///
+  /// Discarding a running track deletes it from the store immediately, but the
+  /// engine keeps working — so this is what still knows the shape of the work
+  /// in flight and keeps the estimate honest after the track itself is gone.
+  Track? _runningTrack;
   DateTime? _runningStartedAt;
   Timer? _ticker;
   bool _disposed = false;
@@ -80,6 +87,14 @@ final class GenerationQueue extends ChangeNotifier {
 
   bool get isBusy => _draining;
 
+  /// True while the engine is finishing work the user has already discarded.
+  ///
+  /// The track is gone from the library the moment it is discarded, but the
+  /// machine is not free: nothing can interrupt a generation, so the next one
+  /// cannot start until this finishes. The UI shows this rather than looking
+  /// idle for the minutes that remain.
+  bool get isFinishingDiscarded => _runningTrack != null && running == null;
+
   /// Number of tracks waiting behind the one running.
   int get waitingCount =>
       pending.where((Track t) => t.status == TrackStatus.queued).length;
@@ -97,7 +112,7 @@ final class GenerationQueue extends ChangeNotifier {
   /// deliberately absent until one run has completed rather than guessed.
   Duration? get runningEstimatedRemaining {
     final elapsed = runningElapsed;
-    final total = _estimateFor(running?.params);
+    final total = _estimateFor(_runningTrack?.params);
     if (elapsed == null || total == null) {
       return null;
     }
@@ -108,7 +123,9 @@ final class GenerationQueue extends ChangeNotifier {
   /// Estimated wait before a track enqueued now would start.
   Duration? get estimatedWait {
     var total = runningEstimatedRemaining ?? Duration.zero;
-    if (runningEstimatedRemaining == null && running != null) {
+    // Discarded work still occupies the engine, so it still counts towards the
+    // wait — hence the snapshot rather than what the store can still see.
+    if (runningEstimatedRemaining == null && _runningTrack != null) {
       return null;
     }
     for (final track in pending) {
@@ -180,10 +197,13 @@ final class GenerationQueue extends ChangeNotifier {
     unawaited(_drain());
   }
 
-  /// Drops a queued track, or abandons the running one.
+  /// Drops a queued track, or discards the running one.
   ///
-  /// Abandoning does not stop the engine. The generation runs to completion and
-  /// its output is discarded; the UI should say so rather than implying a stop.
+  /// Discarding does not stop the engine — nothing can. What it does do is take
+  /// the track out of the library at once, so "discard" means the same thing to
+  /// the user whether or not the work has started. The engine keeps going and
+  /// the result is thrown away when it lands; [isFinishingDiscarded] is how the
+  /// UI says the machine is still busy without pretending the track survived.
   Future<void> cancel(String id) async {
     final track = _find(id);
     if (track == null) {
@@ -191,16 +211,29 @@ final class GenerationQueue extends ChangeNotifier {
     }
     if (track.status == TrackStatus.running) {
       _abandoned.add(id);
-      _notify();
-      return;
     }
-    if (track.status == TrackStatus.queued) {
-      await store.remove(id);
-      _notify();
-    }
+    await store.remove(id);
+    _notify();
   }
 
-  /// Whether a cancel has been requested for the running track.
+  /// Drops everything still waiting, leaving any running track alone.
+  ///
+  /// The counterpart to discarding the running one: together they are a full
+  /// stop, and on their own this is "finish what you started, then stop".
+  Future<void> clearQueue() async {
+    final keep = store.tracks
+        .where((Track t) => t.status != TrackStatus.queued)
+        .toList(growable: false);
+    if (keep.length == store.tracks.length) {
+      return;
+    }
+    // One write rather than one per track: nothing queued has audio to delete,
+    // which is the only thing `remove` would add here.
+    await store.replaceAll(keep);
+    _notify();
+  }
+
+  /// Whether a discard has been requested for the running track.
   bool isAbandoned(String id) => _abandoned.contains(id);
 
   /// Moves a queued track within the queue.
@@ -288,6 +321,7 @@ final class GenerationQueue extends ChangeNotifier {
       _draining = false;
       _stopTicker();
       _runningId = null;
+      _runningTrack = null;
       _runningStartedAt = null;
       _notify();
     }
@@ -295,6 +329,7 @@ final class GenerationQueue extends ChangeNotifier {
 
   Future<void> _run(Track track) async {
     _runningId = track.id;
+    _runningTrack = track;
     _runningStartedAt = DateTime.now();
     _startTicker();
     await store.upsert(track.copyWith(status: TrackStatus.running));
@@ -318,9 +353,16 @@ final class GenerationQueue extends ChangeNotifier {
       await store.writeCalibration(_lastRun!);
 
       if (_abandoned.remove(track.id)) {
-        // The user asked for this back when it could not be stopped. Honour it
-        // now the result exists rather than surfacing a track they discarded.
+        // Already gone from the store — discarding removes the track up front.
+        // What is left is the audio the run just wrote, which nothing points at
+        // now, so delete it here rather than leaving gigabytes for the next
+        // startup's orphan sweep to find.
         await store.remove(track.id);
+        final orphan =
+            store.audioFileFor(track.copyWith(audioFileName: fileName));
+        if (orphan != null && orphan.existsSync()) {
+          await orphan.delete();
+        }
       } else {
         await store.upsert(
           _find(track.id)!.copyWith(
@@ -349,6 +391,7 @@ final class GenerationQueue extends ChangeNotifier {
     } finally {
       _stopTicker();
       _runningId = null;
+      _runningTrack = null;
       _runningStartedAt = null;
       _notify();
     }

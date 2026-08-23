@@ -177,23 +177,86 @@ void main() {
     expect(store.tracks, hasLength(1));
   });
 
-  test('cancelling the running track discards its result when it lands',
+  test('discarding the running track removes it at once and drops the result',
       () async {
     engine.hold();
     final first = await add('first');
     await pump();
 
     await queue.cancel(first.id);
-    // Nothing can stop the engine, so the track is still running and the run
-    // still happens — the result is what gets thrown away.
+    // Gone from the library immediately: "discard" means the same thing whether
+    // or not the work had started.
+    expect(store.tracks, isEmpty);
+    // But nothing can stop the engine, so the run still happens and the machine
+    // is still busy — which is what the UI has to keep saying.
     expect(queue.isAbandoned(first.id), isTrue);
-    expect(store.tracks.single.status, TrackStatus.running);
+    expect(queue.isFinishingDiscarded, isTrue);
 
     engine.release();
     await drained(queue);
 
     expect(engine.runs, hasLength(1));
     expect(store.tracks, isEmpty);
+    expect(queue.isFinishingDiscarded, isFalse);
+  });
+
+  test('discarding a running track leaves no audio behind', () async {
+    engine.hold();
+    final first = await add('first');
+    await pump();
+    await queue.cancel(first.id);
+
+    engine.release();
+    await drained(queue);
+
+    // The run wrote its WAV before anyone knew it was unwanted. Nothing points
+    // at it now, so it must not be left for the next startup to sweep up.
+    final leftover = store.audioDirectory.existsSync()
+        ? store.audioDirectory.listSync()
+        : const <FileSystemEntity>[];
+    expect(leftover, isEmpty);
+  });
+
+  test('the estimate survives the track being discarded', () async {
+    // One completed run gives the queue something to extrapolate from.
+    await add('calibrate');
+    await drained(queue);
+
+    engine.hold();
+    final running = await add('running');
+    await add('waiting');
+    await pump();
+
+    await queue.cancel(running.id);
+    // The discarded work still occupies the engine, so the track waiting behind
+    // it is still waiting for that time to pass.
+    expect(queue.runningEstimatedRemaining, isNotNull);
+    expect(queue.estimatedWait, isNotNull);
+
+    engine.release();
+    await drained(queue);
+  });
+
+  test('clearing the queue drops what is waiting and spares what is running',
+      () async {
+    engine.hold();
+    final running = await add('running');
+    await add('b');
+    await add('c');
+    await pump();
+
+    await queue.clearQueue();
+
+    expect(store.tracks.single.id, running.id);
+    expect(queue.waitingCount, 0);
+
+    engine.release();
+    await drained(queue);
+
+    // The running track was never interrupted, so it still produced its audio.
+    expect(engine.runs.map((GenerationParams p) => p.caption),
+        <String>['running']);
+    expect(store.tracks.single.status, TrackStatus.done);
   });
 
   test('reorder moves a queued track behind the running one', () async {

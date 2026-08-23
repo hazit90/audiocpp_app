@@ -148,10 +148,13 @@ next to it, not in a widget's `if`.
 
 **One generation at a time, and no faking progress.** `GenerationQueue` drains
 serially because the session holds gigabytes and the handles are not
-thread-safe. The ABI has no cancellation, so cancelling a running track marks it
-abandoned and discards the result when it lands — say that in the UI rather than
-implying a stop. There is no step callback either: elapsed time and an
-extrapolated estimate are all we can honestly show.
+thread-safe. The ABI has no cancellation, so discarding a running track removes
+it from the store at once and throws the result away when it lands. The engine
+keeps working, and `isFinishingDiscarded` is what says so: the track is gone, but
+the machine is not free and the next one cannot start. Never let that read as a
+stop, and never let the pane look idle while a discarded run is still going.
+There is no step callback either: elapsed time and an extrapolated estimate are
+all we can honestly show.
 
 **Widgets never touch native handles or block.** Anything long-running goes
 through `GenerationQueue`, which talks to the narrow `GenerationEngine`
@@ -167,6 +170,14 @@ so a test must `await tester.runAsync(...)` for that work to finish, then
 `pump()`. Tap in the normal zone — gestures need the test binding's clock and do
 not dispatch inside `runAsync`. And never `pumpAndSettle()` while the queue is
 running: the indeterminate progress bar animates forever.
+
+A store mutation *started by a tap* needs both, alternating. The tap runs in the
+faked-time zone, so everything after the store's `await` on a file write only
+resumes on a `pump()` — while the write itself only progresses inside
+`runAsync`. One of each is not enough and fails in a way that looks like a
+missing `notifyListeners()`: `store.tracks` is already correct, because `remove`
+mutates the list before its first `await`, yet no notification ever fires and
+the pane renders stale. `settle()` in `library_pane_test.dart` is the loop.
 
 ## After editing the C header
 

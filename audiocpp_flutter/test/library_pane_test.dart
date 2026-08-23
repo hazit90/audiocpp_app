@@ -85,6 +85,22 @@ void main() {
     return track!;
   }
 
+  /// Lets a store mutation started by a tap run to completion.
+  ///
+  /// A tap runs in the zone where timers are faked, so everything after the
+  /// store's `await` on a file write only resumes on a `pump()` — while the
+  /// write itself only progresses in real time, which only `runAsync` allows.
+  /// Neither alone gets there: a single `runAsync` leaves the continuation
+  /// parked, and pumping alone never lets the write finish. Alternating does.
+  Future<void> settle(WidgetTester tester) async {
+    for (var i = 0; i < 20; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 5)),
+      );
+      await tester.pump();
+    }
+  }
+
   testWidgets('empty library explains what to do', (WidgetTester tester) async {
     await show(tester);
     expect(find.textContaining('Nothing here yet'), findsOneWidget);
@@ -104,17 +120,42 @@ void main() {
     expect(find.text('Generating'), findsOneWidget);
   });
 
-  testWidgets('discarding a running track says what it will do',
+  testWidgets('discarding a running track takes it out of the library at once',
       (WidgetTester tester) async {
     engine.hold();
     final track = await enqueue(tester, 'first');
     await show(tester);
 
-    await tester.tap(find.text('Discard when finished'));
-    await tester.pump();
+    await tester.tap(find.text('Discard'));
+    await settle(tester);
 
-    expect(find.text('Finishing, then discarding'), findsOneWidget);
+    // The track is gone from the pane entirely — strip, queue and list.
+    expect(find.text('first'), findsNothing);
+    expect(find.text('Generating'), findsNothing);
+    // What remains is the engine, still busy on work nobody wants.
+    expect(find.text('Discarded'), findsOneWidget);
+    expect(find.textContaining('cannot be interrupted'), findsOneWidget);
     expect(queue.isAbandoned(track.id), isTrue);
+  });
+
+  testWidgets('clearing the queue leaves the running track alone',
+      (WidgetTester tester) async {
+    engine.hold();
+    await enqueue(tester, 'running');
+    await enqueue(tester, 'waiting');
+    await show(tester);
+
+    expect(find.text('UP NEXT · 1'), findsOneWidget);
+
+    await tester.tap(find.text('Clear'));
+    await settle(tester);
+
+    expect(find.text('waiting'), findsNothing);
+    expect(find.text('UP NEXT · 1'), findsNothing);
+    // The one already generating is untouched: it cannot be stopped, and the
+    // Clear button does not pretend otherwise.
+    expect(find.text('Generating'), findsOneWidget);
+    expect(find.text('running'), findsOneWidget);
   });
 
   testWidgets('a failed track shows its error and offers a retry',
