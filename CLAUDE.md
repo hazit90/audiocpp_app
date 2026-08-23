@@ -7,7 +7,7 @@ audio inference), integrated via Dart FFI. See `README.md` for setup.
 
 | Path | What it is |
 |---|---|
-| `third_party/audio.cpp` | Git submodule, pinned. **Never edit** — changes here are lost on update. Patch upstream or work around it in the shim. |
+| `third_party/audio.cpp` | Git submodule, pinned to **our fork** (`hazit90/audio.cpp`). Never edit in place — commit to a topic branch there and bump the pin. See "Working in the fork". |
 | `packages/audiocpp/src/` | The C shim: `audiocpp_ffi.h` (ABI) + `audiocpp_ffi.cpp` + CMake. |
 | `packages/audiocpp/macos/`, `ios/` | Per-platform pods. macOS vendors a dylib, iOS an xcframework of static slices. |
 | `packages/audiocpp/windows/` | Flutter Windows plugin. Compiles nothing — it hands the prebuilt DLL to the runner via `audiocpp_bundled_libraries`. |
@@ -15,6 +15,28 @@ audio inference), integrated via Dart FFI. See `README.md` for setup.
 | `audiocpp_flutter/lib/src/tracks/` | The app's core: `Track`, `TrackStore`, `GenerationQueue`, `GenerationEngine`. No widgets. |
 | `audiocpp_flutter/lib/src/` | The app: `create/`, `library/`, `player/`, `models/` panes over that core. |
 | `audiocpp_flutter/assets/model_specs/` | Curated by hand from `third_party/audio.cpp/model_specs/` — one file per family we support, not a copy of the lot. |
+
+## Working in the fork
+
+The submodule points at `hazit90/audio.cpp`, not upstream. Engine changes are
+ours to make and ours to keep.
+
+**Never open a PR or an issue against `0xShug0/audio.cpp`.** Changes are not
+upstreamed, so do not treat carrying a patch as temporary or suggest a PR as the
+way to stop carrying it. The submodule has an `upstream` remote for *fetching*
+only.
+
+**A pin must be pushed before it lands.** Bumping the superproject to a commit
+that exists only locally leaves every other clone — CI included — unable to
+resolve the submodule, and nothing surfaces that until someone tries. Push the
+topic branch first, then bump.
+
+**Keep the fork rebasable, because rebasing is now permanent.** `main` mirrors
+upstream untouched, changes live on topic branches, and `external/` stays free
+of local edits. Upstream moves fast (426 commits in the six months to the
+current pin) but almost entirely in `external/ggml` and new model families, so
+a patch confined to a model plus a couple of framework headers rebases for
+nearly nothing. A local change under `external/` is what would end that.
 
 ## Rules that matter
 
