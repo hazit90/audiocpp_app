@@ -174,9 +174,9 @@ thread-safe. Discarding a running track removes it from the store at once and
 calls `audiocpp_cancel_request`, and `isFinishingDiscarded` covers the gap until
 the run unwinds -- the track is gone, but the machine is not free yet.
 
-Cancellation is honoured *between units of work*, never mid-step: measured at
-67ms during the autoregressive phase and 122ms 180s into a run, but not at all
-once a run is past its last check. So `_abandoned` stays as the backstop, the UI says
+Cancellation is honoured *between units of work*, never mid-step. Measured on an
+M1 Max with q4_0: 67ms in the autoregressive phase, 122ms 180s into a run, 148ms
+during the weight upload. Not at all once a run is past its last check. So `_abandoned` stays as the backstop, the UI says
 "stops at the end of the current step" rather than implying instant, and a
 cancelled run is `AUDIOCPP_CANCELLED` / `GenerationCancelled` -- never a
 failure, or the user gets an error they caused on purpose.
@@ -184,11 +184,18 @@ failure, or the user gets an error they caused on purpose.
 There is still no step callback: elapsed time and an extrapolated estimate are
 all we can honestly show.
 
-**Model loading is the one stretch that still cannot be interrupted.** It is
-also the longest, and the engine clears its cancel flag when a run starts -- so
-a discard during the load would be erased and the generation would go ahead in
-full. `_run` asks `_abandoned` once more after the load for exactly that reason;
-do not remove it without making the load itself cancellable.
+**Loading a model is free; the weights arrive inside `generate()`.**
+`registry.load` reads specs and opens files and measures 0s. The gigabytes land
+lazily when `ensure_ar` and friends build a component, and `mem_saver` (on by
+default) resets those components after each phase — so the language model is
+re-read at the start of *every* generation, not once. `BackendWeightStore`
+checks for cancellation per tensor because of this, reached through a flag on
+`ExecutionContext`, which is the only thing every weight builder already holds.
+
+`audiocpp_model_load` itself still cannot be interrupted, and `_run` asks
+`_abandoned` once more after it: the engine clears its flag when a run starts,
+so a discard during the load would otherwise be erased and the generation would
+go ahead in full.
 
 **Disposing cancels first.** A run owns the worker isolate, so every teardown
 command queues behind it: without this, closing the app mid-generation waits out
