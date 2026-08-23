@@ -285,6 +285,17 @@ class AudioCppBindings {
   late final _audiocpp_resume_request = _audiocpp_resume_requestPtr
       .asFunction<int Function()>();
 
+  int audiocpp_progress_query(ffi.Pointer<audiocpp_progress> out_progress) {
+    return _audiocpp_progress_query(out_progress);
+  }
+
+  late final _audiocpp_progress_queryPtr =
+      _lookup<
+        ffi.NativeFunction<ffi.Int32 Function(ffi.Pointer<audiocpp_progress>)>
+      >('audiocpp_progress_query');
+  late final _audiocpp_progress_query = _audiocpp_progress_queryPtr
+      .asFunction<int Function(ffi.Pointer<audiocpp_progress>)>();
+
   /// -------------------------------------------------------------------------- */
   /// /* Audio results                                                              */
   /// /* --------------------------------------------------------------------------
@@ -565,6 +576,70 @@ final class audiocpp_request extends ffi.Struct {
   external audiocpp_options request_options;
 }
 
+/// Which stage of a generation is running.
+///
+/// Crosses the ABI as int32_t, like every other enum here. The phases are the
+/// pipeline's own and are not interchangeable: they advance in different units
+/// and cost wildly different amounts per unit, so a caller wanting one overall
+/// fraction has to weight them by measured cost rather than counting units.
+enum audiocpp_progress_phase {
+  AUDIOCPP_PHASE_UNKNOWN(0),
+
+  /// Autoregressive frame generation. Advances one audio frame at a time.
+  AUDIOCPP_PHASE_AR(1),
+
+  /// Diffusion denoising. Advances one denoiser evaluation at a time, and is
+  /// the bulk of a run -- roughly three quarters of it at 30 steps.
+  AUDIOCPP_PHASE_FLOW(2),
+
+  /// Waveform synthesis. Advances one chunk at a time.
+  AUDIOCPP_PHASE_VOCODER(3),
+
+  /// Stitching and normalising the finished audio.
+  AUDIOCPP_PHASE_FINALIZING(4);
+
+  final int value;
+  const audiocpp_progress_phase(this.value);
+
+  static audiocpp_progress_phase fromValue(int value) => switch (value) {
+    0 => AUDIOCPP_PHASE_UNKNOWN,
+    1 => AUDIOCPP_PHASE_AR,
+    2 => AUDIOCPP_PHASE_FLOW,
+    3 => AUDIOCPP_PHASE_VOCODER,
+    4 => AUDIOCPP_PHASE_FINALIZING,
+    _ => throw ArgumentError(
+      'Unknown value for audiocpp_progress_phase: $value',
+    ),
+  };
+}
+
+final class audiocpp_progress extends ffi.Struct {
+  /// audiocpp_progress_phase
+  @ffi.Int32()
+  external int phase;
+
+  /// Identifies the run this reading came from; a fresh run gets a new one.
+  /// A caller polling asynchronously must ignore a reading whose serial is not
+  /// the run it is displaying, or it will render the tail of the previous run
+  /// as the opening of this one.
+  @ffi.Int32()
+  external int run_serial;
+
+  /// Units completed out of the phase's total. Units are per-phase and not
+  /// comparable across phases. AUDIOCPP_PHASE_AR's total is an upper bound --
+  /// the model can stop early -- so that phase can end before done reaches it.
+  @ffi.Int64()
+  external int done;
+
+  @ffi.Int64()
+  external int total;
+
+  /// Wall time since this phase began, which is what a rate has to be measured
+  /// against. Includes any time the run spent paused.
+  @ffi.Int64()
+  external int phase_elapsed_ms;
+}
+
 const int AUDIOCPP_FFI_ABI_VERSION_MAJOR = 1;
 
-const int AUDIOCPP_FFI_ABI_VERSION_MINOR = 2;
+const int AUDIOCPP_FFI_ABI_VERSION_MINOR = 3;

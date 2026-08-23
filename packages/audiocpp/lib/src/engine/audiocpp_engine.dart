@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:ffi';
 import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:ffi/ffi.dart';
+
 import '../exceptions.dart';
+import '../ffi/audiocpp_bindings.g.dart';
 import '../ffi/library.dart';
 import '../types.dart';
 import 'protocol.dart';
@@ -137,6 +141,41 @@ final class AudioCppEngine {
   /// Lets a paused generation carry on. Harmless if it is not paused.
   void requestResume() {
     AudioCppLibrary.instance.audiocpp_resume_request();
+  }
+
+  /// How far the generation in flight has got.
+  ///
+  /// Same isolate story as [requestCancel]: the worker is blocked inside the
+  /// run, so this is read straight from the library by whichever isolate asks.
+  /// That is also why progress is polled rather than pushed -- a callback would
+  /// be delivered to the blocked isolate and arrive after the run it described.
+  ///
+  /// Cheap enough for a UI timer: one lock and a struct copy, no allocation
+  /// beyond the out parameter. Null if the library cannot be reached at all,
+  /// which is the case in tests that never open it.
+  ProgressSnapshot? get progress {
+    final out = calloc<audiocpp_progress>();
+    try {
+      final status =
+          AudioCppLibrary.instance.audiocpp_progress_query(out);
+      if (status != audiocpp_status.AUDIOCPP_OK.value) {
+        return null;
+      }
+      final value = out.ref;
+      return ProgressSnapshot(
+        phase: GenerationPhase.fromNative(value.phase),
+        runSerial: value.run_serial,
+        done: value.done,
+        total: value.total,
+        phaseElapsed: Duration(milliseconds: value.phase_elapsed_ms),
+      );
+    } on AudioCppException {
+      // This isolate never opened the library, so there is nothing running to
+      // report on. Matches dispose()'s handling of the same case.
+      return null;
+    } finally {
+      calloc.free(out);
+    }
   }
 
   /// Shuts the worker down, releasing every handle it still owns.

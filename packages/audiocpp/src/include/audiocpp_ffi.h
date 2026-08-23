@@ -40,7 +40,7 @@ extern "C" {
 /* Bump the minor on additive changes, the major on breaking ones. The Dart
  * package checks the major matches what its bindings were generated against. */
 #define AUDIOCPP_FFI_ABI_VERSION_MAJOR 1
-#define AUDIOCPP_FFI_ABI_VERSION_MINOR 2
+#define AUDIOCPP_FFI_ABI_VERSION_MINOR 3
 
 /* -------------------------------------------------------------------------- */
 /* Status codes                                                               */
@@ -262,7 +262,7 @@ AUDIOCPP_API int32_t /* audiocpp_status */ audiocpp_session_run(
  * the session remains usable.
  *
  * Cancellation is honoured between units of work, not instantly: MiniMax Music
- * 3 checks per AR frame (sub-second) and per flow chunk (tens of seconds).
+ * 3 checks per AR frame and per denoising step, both sub-second.
  */
 AUDIOCPP_API int32_t /* audiocpp_status */ audiocpp_cancel_request(void);
 
@@ -289,6 +289,66 @@ AUDIOCPP_API int32_t /* audiocpp_status */ audiocpp_cancel_request(void);
  */
 AUDIOCPP_API int32_t /* audiocpp_status */ audiocpp_pause_request(void);
 AUDIOCPP_API int32_t /* audiocpp_status */ audiocpp_resume_request(void);
+
+/* -------------------------------------------------------------------------- */
+/* Progress                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Which stage of a generation is running.
+ *
+ * Crosses the ABI as int32_t, like every other enum here. The phases are the
+ * pipeline's own and are not interchangeable: they advance in different units
+ * and cost wildly different amounts per unit, so a caller wanting one overall
+ * fraction has to weight them by measured cost rather than counting units.
+ */
+typedef enum audiocpp_progress_phase {
+    AUDIOCPP_PHASE_UNKNOWN = 0,
+    /* Autoregressive frame generation. Advances one audio frame at a time. */
+    AUDIOCPP_PHASE_AR = 1,
+    /* Diffusion denoising. Advances one denoiser evaluation at a time, and is
+     * the bulk of a run -- roughly three quarters of it at 30 steps. */
+    AUDIOCPP_PHASE_FLOW = 2,
+    /* Waveform synthesis. Advances one chunk at a time. */
+    AUDIOCPP_PHASE_VOCODER = 3,
+    /* Stitching and normalising the finished audio. */
+    AUDIOCPP_PHASE_FINALIZING = 4
+} audiocpp_progress_phase;
+
+typedef struct audiocpp_progress {
+    int32_t phase; /* audiocpp_progress_phase */
+    /* Identifies the run this reading came from; a fresh run gets a new one.
+     * A caller polling asynchronously must ignore a reading whose serial is not
+     * the run it is displaying, or it will render the tail of the previous run
+     * as the opening of this one. */
+    int32_t run_serial;
+    /* Units completed out of the phase's total. Units are per-phase and not
+     * comparable across phases. AUDIOCPP_PHASE_AR's total is an upper bound --
+     * the model can stop early -- so that phase can end before done reaches it. */
+    int64_t done;
+    int64_t total;
+    /* Wall time since this phase began, which is what a rate has to be measured
+     * against. Includes any time the run spent paused. */
+    int64_t phase_elapsed_ms;
+} audiocpp_progress;
+
+/*
+ * Reads how far the generation in flight has got.
+ *
+ * Polled rather than pushed, and deliberately: a callback would have to be
+ * delivered to the thread that called audiocpp_session_run, and that thread is
+ * blocked inside it for the whole run -- so nothing would arrive until the run
+ * it described had finished. Reading from another thread has the same soundness
+ * argument as audiocpp_cancel_request.
+ *
+ * Cheap enough to poll on a UI timer: one lock and a struct copy. Never fails
+ * for want of a run -- with nothing running it reports AUDIOCPP_PHASE_UNKNOWN.
+ *
+ * Only families that report progress populate this. One that does not stays at
+ * AUDIOCPP_PHASE_UNKNOWN for the whole run, which a caller should show as
+ * indeterminate rather than as no progress.
+ */
+AUDIOCPP_API int32_t /* audiocpp_status */ audiocpp_progress_query(audiocpp_progress * out_progress);
 
 /* -------------------------------------------------------------------------- */
 /* Audio results                                                              */

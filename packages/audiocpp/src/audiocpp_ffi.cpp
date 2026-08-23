@@ -440,6 +440,27 @@ int32_t audiocpp_resume_request(void) {
     return AUDIOCPP_OK;
 }
 
+int32_t audiocpp_progress_query(audiocpp_progress * out_progress) {
+    return guard(AUDIOCPP_ERROR_UNKNOWN, [&]() -> audiocpp_status {
+        if (out_progress == nullptr) {
+            set_error("audiocpp_progress_query requires non-null out_progress");
+            return AUDIOCPP_ERROR_INVALID_ARGUMENT;
+        }
+        // Reads the same object the running generation writes to, from whatever
+        // thread asks -- see g_control. With nothing running this is the
+        // zero-initialised state, which reports as UNKNOWN rather than failing:
+        // a caller polling on a timer should not have to special-case the gaps
+        // between runs.
+        const auto snapshot = g_control.progress();
+        out_progress->phase = static_cast<int32_t>(snapshot.phase);
+        out_progress->run_serial = static_cast<int32_t>(snapshot.serial);
+        out_progress->done = snapshot.done;
+        out_progress->total = snapshot.total;
+        out_progress->phase_elapsed_ms = snapshot.phase_elapsed_ms;
+        return AUDIOCPP_OK;
+    });
+}
+
 int32_t audiocpp_session_run(
     audiocpp_session * session,
     const audiocpp_request * request,

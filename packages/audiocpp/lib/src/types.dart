@@ -155,3 +155,86 @@ class InferenceRequest {
   /// Raw `--request-option` pairs.
   final Map<String, String> options;
 }
+
+/// Which stage of a generation is running.
+///
+/// Values mirror `audiocpp_progress_phase` in `audiocpp_ffi.h`. The phases
+/// advance in different units and cost very different amounts per unit, so a
+/// single overall fraction has to weight them by measured cost -- counting raw
+/// units across phases is meaningless.
+enum GenerationPhase {
+  /// Nothing running, or a model family that does not report progress. Callers
+  /// should show this as indeterminate rather than as zero progress.
+  unknown(0),
+
+  /// Autoregressive frame generation, one audio frame per unit.
+  ar(1),
+
+  /// Diffusion denoising, one denoiser evaluation per unit. The bulk of a run.
+  flow(2),
+
+  /// Waveform synthesis, one chunk per unit.
+  vocoder(3),
+
+  /// Stitching and normalising the finished audio.
+  finalizing(4);
+
+  const GenerationPhase(this.nativeValue);
+
+  final int nativeValue;
+
+  /// Maps a native value, treating anything unrecognised as [unknown] so a
+  /// newer library reporting a phase this build has never heard of degrades to
+  /// an indeterminate bar instead of throwing mid-run.
+  static GenerationPhase fromNative(int value) {
+    for (final phase in GenerationPhase.values) {
+      if (phase.nativeValue == value) {
+        return phase;
+      }
+    }
+    return GenerationPhase.unknown;
+  }
+}
+
+/// How far the generation in flight has got.
+///
+/// Polled, never pushed: the isolate that starts a run is blocked inside it for
+/// the whole run, so a callback would not be delivered until the run it
+/// described had already finished.
+@immutable
+class ProgressSnapshot {
+  const ProgressSnapshot({
+    required this.phase,
+    required this.runSerial,
+    required this.done,
+    required this.total,
+    required this.phaseElapsed,
+  });
+
+  final GenerationPhase phase;
+
+  /// Identifies the run this reading came from; a fresh run gets a new one.
+  ///
+  /// A reading is only meaningful against the run a caller believes is running.
+  /// Polling is asynchronous to starting and finishing, so without this check a
+  /// caller renders the tail of the previous run as the opening of this one.
+  final int runSerial;
+
+  /// Units completed, out of [total] for this phase.
+  ///
+  /// For [GenerationPhase.ar] the total is an upper bound rather than a count --
+  /// the model can stop early -- so that phase may end before the two meet.
+  final int done;
+  final int total;
+
+  /// Wall time since this phase began. Includes time spent paused.
+  final Duration phaseElapsed;
+
+  /// Whether this reading says anything. False between runs and for families
+  /// that do not report.
+  bool get isReporting => phase != GenerationPhase.unknown && total > 0;
+
+  /// Position within this phase alone. Never a whole-run fraction.
+  double? get phaseFraction =>
+      isReporting ? (done / total).clamp(0.0, 1.0) : null;
+}

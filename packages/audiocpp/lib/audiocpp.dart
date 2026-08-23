@@ -29,6 +29,8 @@ export 'src/types.dart'
         AudioCppBackend,
         AudioCppDevice,
         AudioCppTask,
+        GenerationPhase,
         InferenceRequest,
+        ProgressSnapshot,
         ModelDescriptor,
         SessionConfig;
