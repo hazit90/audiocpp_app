@@ -26,11 +26,18 @@ final class GenerationQueue extends ChangeNotifier {
     required this.store,
     required this.engine,
     required this.resolveModelPath,
+    this.stopGrace = const Duration(milliseconds: 400),
   });
 
   final TrackStore store;
   final GenerationEngine engine;
   final ModelPathResolver resolveModelPath;
+
+  /// How long a stop is given to land before [isStopping] admits to it.
+  ///
+  /// Injectable so a test can assert both sides of it outright, rather than
+  /// racing a wall clock that a loaded machine will lose.
+  final Duration stopGrace;
 
   /// Ids the user gave up on.
   ///
@@ -51,6 +58,10 @@ final class GenerationQueue extends ChangeNotifier {
   /// in flight and keeps the estimate honest after the track itself is gone.
   Track? _runningTrack;
   DateTime? _runningStartedAt;
+
+  /// When a stop was last asked for, so [isStopping] can stay quiet while the
+  /// engine is still likely to be unwinding.
+  DateTime? _stopRequestedAt;
   Timer? _ticker;
   bool _disposed = false;
 
@@ -90,13 +101,23 @@ final class GenerationQueue extends ChangeNotifier {
 
   bool get isBusy => _draining;
 
-  /// True while the engine is finishing work the user has already discarded.
+  /// True while a stop has been asked for and the run has not ended yet.
   ///
-  /// The track is gone from the library the moment it is discarded, but the
-  /// machine is not free: nothing can interrupt a generation, so the next one
-  /// cannot start until this finishes. The UI shows this rather than looking
-  /// idle for the minutes that remain.
-  bool get isFinishingDiscarded => _runningTrack != null && running == null;
+  /// Deliberately false for the first [stopGrace]. A stop usually lands in
+  /// about a tenth of a second, and a strip that appears and vanishes inside
+  /// two hundred milliseconds reads as a glitch rather than as information.
+  /// What this is for is the case that is genuinely slow -- a run already past
+  /// its last check, which finishes on its own -- where saying nothing would
+  /// leave the pane looking idle while the machine is still busy.
+  bool get isStopping {
+    final askedAt = _stopRequestedAt;
+    if (_runningTrack == null || running != null || askedAt == null) {
+      return false;
+    }
+    return DateTime.now().difference(askedAt) >= stopGrace;
+  }
+
+
 
   /// Number of tracks waiting behind the one running.
   int get waitingCount =>
@@ -126,8 +147,8 @@ final class GenerationQueue extends ChangeNotifier {
   /// Estimated wait before a track enqueued now would start.
   Duration? get estimatedWait {
     var total = runningEstimatedRemaining ?? Duration.zero;
-    // Discarded work still occupies the engine, so it still counts towards the
-    // wait — hence the snapshot rather than what the store can still see.
+    // A run being stopped still occupies the engine, so it still counts towards
+    // the wait — hence the snapshot rather than what the store can still see.
     if (runningEstimatedRemaining == null && _runningTrack != null) {
       return null;
     }
@@ -205,8 +226,8 @@ final class GenerationQueue extends ChangeNotifier {
   /// Discarding does not stop the engine — nothing can. What it does do is take
   /// the track out of the library at once, so "discard" means the same thing to
   /// the user whether or not the work has started. The engine keeps going and
-  /// the result is thrown away when it lands; [isFinishingDiscarded] is how the
-  /// UI says the machine is still busy without pretending the track survived.
+  /// the result is thrown away if it lands anyway; [isStopping] is how the UI
+  /// says the machine is still busy without pretending the track survived.
   Future<void> cancel(String id) async {
     final track = _find(id);
     if (track == null) {
@@ -214,6 +235,7 @@ final class GenerationQueue extends ChangeNotifier {
     }
     if (track.status == TrackStatus.running) {
       _abandoned.add(id);
+      _stopRequestedAt = DateTime.now();
       // Asks the engine to stop. It is honoured between units of work, so the
       // run still takes a moment to unwind -- and may not be honoured at all if
       // it is already past its last check. _abandoned stays the backstop for
@@ -331,6 +353,7 @@ final class GenerationQueue extends ChangeNotifier {
       _runningId = null;
       _runningTrack = null;
       _runningStartedAt = null;
+      _stopRequestedAt = null;
       _notify();
     }
   }
@@ -414,6 +437,7 @@ final class GenerationQueue extends ChangeNotifier {
       _runningId = null;
       _runningTrack = null;
       _runningStartedAt = null;
+      _stopRequestedAt = null;
       _notify();
     }
   }

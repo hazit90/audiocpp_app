@@ -159,10 +159,10 @@ class _LibraryPaneState extends State<LibraryPane> {
         ),
         if (queue.running case final Track running)
           _RunningStrip(queue: queue, track: running)
-        // The discarded track is already gone; this is about the machine still
-        // being busy with it, which is why it carries no title and no controls.
-        else if (queue.isFinishingDiscarded)
-          _DiscardedStrip(queue: queue),
+        // The track is already gone; this is about the machine still being busy
+        // with it, which is why it carries no title and no controls.
+        else if (queue.isStopping)
+          _StoppingStrip(queue: queue),
         if (queue.waitingCount > 0) _QueueSection(queue: queue),
         const Divider(),
         Expanded(
@@ -391,7 +391,7 @@ class _RunningStrip extends StatelessWidget {
             alignment: Alignment.centerRight,
             child: TextButton(
               onPressed: () => queue.cancel(track.id),
-              child: const Text('Discard'),
+              child: const Text('Stop'),
             ),
           ),
         ],
@@ -400,16 +400,14 @@ class _RunningStrip extends StatelessWidget {
   }
 }
 
-/// What the engine is doing after the user gave up on it.
+/// Shown only when a stop is taking longer than usual.
 ///
-/// The track itself is gone the moment it is discarded, so nothing here names
-/// it. What is left to report is that the machine is not free yet: the engine
-/// checks between units of work rather than mid-step, so a stop lands in
-/// seconds rather than instantly -- and if the run is already past its last
-/// check, it finishes anyway. That gap is invisible from outside and would
-/// otherwise read as the app hanging.
-class _DiscardedStrip extends StatelessWidget {
-  const _DiscardedStrip({required this.queue});
+/// The track is gone the moment it is stopped, so nothing here names it. What
+/// is left to report is that the machine is not free yet, which happens when a
+/// run is already past its last check and finishes on its own. That is
+/// invisible from outside and would otherwise read as the app hanging.
+class _StoppingStrip extends StatelessWidget {
+  const _StoppingStrip({required this.queue});
 
   final GenerationQueue queue;
 

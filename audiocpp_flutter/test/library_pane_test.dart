@@ -50,6 +50,22 @@ void main() {
     }
   });
 
+  /// Rebuilds the queue with an explicit stop grace.
+  ///
+  /// Both sides of the grace are worth asserting, and doing it by real elapsed
+  /// time means racing `settle`'s own duration on a machine running the rest of
+  /// the suite alongside.
+  void useStopGrace(Duration grace) {
+    queue.dispose();
+    queue = GenerationQueue(
+      store: store,
+      engine: engine,
+      resolveModelPath: (String id) async => '/models/$id',
+      stopGrace: grace,
+    );
+    queue.restore();
+  }
+
   Future<void> show(WidgetTester tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -137,21 +153,43 @@ void main() {
   testWidgets('discarding a running track takes it out of the library at once',
       (WidgetTester tester) async {
     engine.hold();
+    // Long enough that the grace cannot lapse while the test is running.
+    useStopGrace(const Duration(minutes: 1));
     final track = await enqueue(tester, 'first');
     await started(tester);
     await show(tester);
 
-    await tester.tap(find.text('Discard'));
+    await tester.tap(find.text('Stop'));
     await settle(tester);
 
     // The track is gone from the pane entirely — strip, queue and list.
     expect(find.text('first'), findsNothing);
     expect(find.text('Generating'), findsNothing);
-    // What remains is the engine, unwinding: the stop lands between units of
-    // work, not the instant the button is pressed.
+    expect(queue.isAbandoned(track.id), isTrue);
+    // And nothing about stopping, which normally lands too fast to be worth
+    // announcing. A strip here would flash for a couple of frames.
+    expect(find.text('Stopping'), findsNothing);
+
+
+  });
+
+  testWidgets('a stop that does not land is reported rather than left silent',
+      (WidgetTester tester) async {
+    engine.hold();
+    // Already lapsed, standing in for a run past its last check that is
+    // finishing on its own.
+    useStopGrace(Duration.zero);
+    await enqueue(tester, 'first');
+    await started(tester);
+    await show(tester);
+
+    await tester.tap(find.text('Stop'));
+    await settle(tester);
+
+    // The machine is still busy, and saying nothing would just look stuck.
+    expect(find.text('first'), findsNothing);
     expect(find.text('Stopping'), findsOneWidget);
     expect(find.textContaining('end of the current step'), findsOneWidget);
-    expect(queue.isAbandoned(track.id), isTrue);
   });
 
   testWidgets('clearing the queue leaves the running track alone',

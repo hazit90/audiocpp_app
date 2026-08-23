@@ -176,7 +176,10 @@ the run unwinds -- the track is gone, but the machine is not free yet.
 
 Cancellation is honoured *between units of work*, never mid-step. Measured on an
 M1 Max with q4_0: 67ms in the autoregressive phase, 122ms 180s into a run, 148ms
-during the weight upload. Not at all once a run is past its last check. So `_abandoned` stays as the backstop, the UI says
+during the weight upload. Not at all once a run is past its last check — which
+is the only case `isStopping` exists for, and why it stays quiet for
+`stopGrace` first. A strip that appears and vanishes inside 150ms is a glitch,
+not information. So `_abandoned` stays as the backstop, the UI says
 "stops at the end of the current step" rather than implying instant, and a
 cancelled run is `AUDIOCPP_CANCELLED` / `GenerationCancelled` -- never a
 failure, or the user gets an error they caused on purpose.

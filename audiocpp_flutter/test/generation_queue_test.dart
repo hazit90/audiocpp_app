@@ -58,7 +58,7 @@ final class OwnQueue {
   }
 }
 
-Future<OwnQueue> ownQueue() async {
+Future<OwnQueue> ownQueue({Duration? stopGrace}) async {
   final root = await Directory.systemTemp.createTemp('audiocpp_dispose_test');
   final store = TrackStore(root: root);
   await store.load();
@@ -67,6 +67,7 @@ Future<OwnQueue> ownQueue() async {
     store: store,
     engine: engine,
     resolveModelPath: (String id) async => '/models/$id',
+    stopGrace: stopGrace ?? const Duration(milliseconds: 400),
   );
   queue.restore();
   return OwnQueue(queue, engine, root);
@@ -235,17 +236,24 @@ void main() {
     // Gone from the library immediately: "discard" means the same thing whether
     // or not the work had started.
     expect(store.tracks, isEmpty);
-    // But nothing can stop the engine, so the run still happens and the machine
-    // is still busy — which is what the UI has to keep saying.
     expect(queue.isAbandoned(first.id), isTrue);
-    expect(queue.isFinishingDiscarded, isTrue);
+    // Nothing is said about stopping yet: a stop normally lands in a fraction
+    // of a second, and announcing one that is about to succeed would put a
+    // strip on screen for two frames.
+    expect(queue.isStopping, isFalse);
+
+    // This run is held open, standing in for one already past its last check.
+    // Once the grace has passed, the pane has to say the machine is still busy
+    // rather than look idle.
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    expect(queue.isStopping, isTrue);
 
     engine.release();
     await drained(queue);
 
     expect(engine.runs, hasLength(1));
     expect(store.tracks, isEmpty);
-    expect(queue.isFinishingDiscarded, isFalse);
+    expect(queue.isStopping, isFalse);
   });
 
   test('discarding the running track asks the engine to stop', () async {
