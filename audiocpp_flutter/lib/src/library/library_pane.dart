@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../create/enqueue_button.dart' show formatDuration;
 import '../player/playback_controller.dart';
@@ -644,16 +645,24 @@ class _StatusLine extends StatelessWidget {
         return Row(
           children: <Widget>[
             Flexible(
-              // The engine's own text stays reachable in the tooltip: it is
-              // the thing worth pasting into a bug report, just not the thing
-              // worth reading in a list.
+              // The engine's own text stays reachable two ways: a tooltip for a
+              // pointer, and a tap for a finger. A tooltip alone is useless on
+              // a touch device, and this row is exactly where an unrecognised
+              // engine failure gets truncated to nothing usable.
               child: Tooltip(
                 message: failure.detail ?? failure.summary,
-                child: Text(
-                  failure.oneLine,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: style?.copyWith(color: theme.colorScheme.error),
+                child: InkWell(
+                  onTap: () => _showFailureDetail(context, track, failure),
+                  child: Text(
+                    failure.oneLine,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: style?.copyWith(
+                      color: theme.colorScheme.error,
+                      decoration: TextDecoration.underline,
+                      decorationColor: theme.colorScheme.error,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -665,5 +674,60 @@ class _StatusLine extends StatelessWidget {
           ],
         );
     }
+  }
+
+  /// Shows the engine's own words, in full and selectable.
+  ///
+  /// [FailureMessage] deliberately rewrites what it recognises, but anything it
+  /// does not falls through as raw engine text -- which is long, starts with a
+  /// container path on iOS, and is the only thing that says what actually went
+  /// wrong. Two ellipsised lines are not enough to debug from.
+  void _showFailureDetail(
+    BuildContext context,
+    Track track,
+    FailureMessage failure,
+  ) {
+    showDialog<void>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: Text(track.title),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Text(failure.summary),
+              if (failure.suggestion != null) ...<Widget>[
+                const SizedBox(height: 8),
+                Text(failure.suggestion!),
+              ],
+              if (failure.detail != null &&
+                  failure.detail != failure.summary) ...<Widget>[
+                const SizedBox(height: 16),
+                SelectableText(
+                  failure.detail!,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace',
+                      ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: failure.detail ?? failure.summary));
+              Navigator.of(context).pop();
+            },
+            child: const Text('Copy'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 }
