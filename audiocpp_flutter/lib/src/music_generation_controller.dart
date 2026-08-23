@@ -139,6 +139,12 @@ class MusicGenerationController extends ChangeNotifier
   @override
   void requestCancel() => _engine?.requestCancel();
 
+  @override
+  void requestPause() => _engine?.requestPause();
+
+  @override
+  void requestResume() => _engine?.requestResume();
+
   /// Prefer the GPU when one is present; ggml picks the device itself.
   AudioCppBackend get _preferredBackend {
     final hasGpu = _devices.any((AudioCppDevice device) => device.type == 'GPU');

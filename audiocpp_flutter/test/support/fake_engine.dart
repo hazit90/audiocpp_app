@@ -38,6 +38,10 @@ final class FakeEngine implements GenerationEngine {
   /// starts, and honoured at one point mid-run rather than instantly.
   bool _cancelRequested = false;
 
+  /// Blocks the run while paused, as the engine does — rather than unwinding.
+  bool _paused = false;
+  Completer<void>? _pauseGate;
+
   /// How many times a cancel was asked for, so a test can tell "the queue
   /// called through" from "the run happened to end".
   int cancelRequests = 0;
@@ -79,6 +83,24 @@ final class FakeEngine implements GenerationEngine {
   void requestCancel() {
     cancelRequests++;
     _cancelRequested = true;
+    // Mirrors the engine: cancelling wakes a paused run, which is the only way
+    // one ever ends.
+    _paused = false;
+    _pauseGate?.complete();
+    _pauseGate = null;
+  }
+
+  @override
+  void requestPause() {
+    _paused = true;
+    _pauseGate ??= Completer<void>();
+  }
+
+  @override
+  void requestResume() {
+    _paused = false;
+    _pauseGate?.complete();
+    _pauseGate = null;
   }
 
   @override
@@ -95,6 +117,10 @@ final class FakeEngine implements GenerationEngine {
     final gate = _gate;
     if (gate != null) {
       await gate.future;
+    }
+    // Blocks rather than returning, as a real paused run does.
+    while (_paused) {
+      await _pauseGate!.future;
     }
     // After the gate, standing in for the engine noticing between units of
     // work rather than the instant the flag is set.

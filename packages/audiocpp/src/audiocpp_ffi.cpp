@@ -23,6 +23,8 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include "engine/framework/core/cancel.h"
+
 #include <atomic>
 #include <stdexcept>
 #include <string>
@@ -48,7 +50,7 @@ namespace {
 //
 // Sound only while one generation runs at a time, which the engine requires for
 // other reasons anyway.
-std::atomic_bool g_cancel_requested{false};
+engine::core::RunControl g_control;
 
 // ---------------------------------------------------------------------------
 // Error plumbing
@@ -423,7 +425,18 @@ void audiocpp_session_free(audiocpp_session * session) {
 }
 
 int32_t audiocpp_cancel_request(void) {
-    g_cancel_requested.store(true, std::memory_order_relaxed);
+    // Also wakes a paused run, which is the only way one ever unwinds.
+    g_control.request_cancel();
+    return AUDIOCPP_OK;
+}
+
+int32_t audiocpp_pause_request(void) {
+    g_control.request_pause();
+    return AUDIOCPP_OK;
+}
+
+int32_t audiocpp_resume_request(void) {
+    g_control.request_resume();
     return AUDIOCPP_OK;
 }
 
@@ -448,10 +461,11 @@ int32_t audiocpp_session_run(
             task_request.text_input = std::move(transcript);
         }
 
-        // Cleared here rather than on completion: a cancel that arrives while
-        // nothing is running must not stop whatever starts next.
-        g_cancel_requested.store(false, std::memory_order_relaxed);
-        task_request.cancel = &g_cancel_requested;
+        // Cleared here rather than on completion: a stop or a pause that
+        // arrives while nothing is running must not carry into whatever starts
+        // next -- and a leftover pause would hang the next run outright.
+        g_control.reset();
+        task_request.cancel = &g_control;
 
         // Mirrors audiocpp_cli: prepare() lets the session size its graphs and
         // caches from the request before run() executes.
@@ -464,7 +478,7 @@ int32_t audiocpp_session_run(
             // Asking the flag rather than matching the exception: the throw
             // comes from upstream, and coupling this to its type or its wording
             // would break the first time either is refactored.
-            if (g_cancel_requested.load(std::memory_order_relaxed)) {
+            if (engine::core::cancel_requested(&g_control)) {
                 set_error("run cancelled");
                 return AUDIOCPP_CANCELLED;
             }

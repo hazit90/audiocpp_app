@@ -192,6 +192,40 @@ void main() {
     expect(find.textContaining('end of the current step'), findsOneWidget);
   });
 
+  testWidgets('pausing a run says so and offers to resume it',
+      (WidgetTester tester) async {
+    engine.hold();
+    await enqueue(tester, 'first');
+    await started(tester);
+    await show(tester);
+
+    expect(find.text('Generating'), findsOneWidget);
+
+    await tester.tap(find.text('Pause'));
+    await settle(tester);
+
+    expect(find.text('Paused'), findsOneWidget);
+    expect(find.text('Resume'), findsOneWidget);
+    // The track is still the user's -- pause is not a discard.
+    expect(find.text('first'), findsOneWidget);
+    // And the cost of holding it is stated rather than left to be discovered.
+    expect(find.textContaining('memory'), findsOneWidget);
+    // Stop stays available, or a paused run would be a trap.
+    expect(find.text('Stop'), findsOneWidget);
+
+    await tester.tap(find.text('Resume'));
+    await settle(tester);
+
+    expect(find.text('Generating'), findsOneWidget);
+    expect(find.text('Paused'), findsNothing);
+
+    // Let the run conclude: resuming restarts the elapsed ticker, and a test
+    // that ends with it live fails on a pending timer rather than on anything
+    // it was actually asserting.
+    engine.release();
+    await settle(tester);
+  });
+
   testWidgets('clearing the queue leaves the running track alone',
       (WidgetTester tester) async {
     engine.hold();

@@ -40,7 +40,7 @@ extern "C" {
 /* Bump the minor on additive changes, the major on breaking ones. The Dart
  * package checks the major matches what its bindings were generated against. */
 #define AUDIOCPP_FFI_ABI_VERSION_MAJOR 1
-#define AUDIOCPP_FFI_ABI_VERSION_MINOR 1
+#define AUDIOCPP_FFI_ABI_VERSION_MINOR 2
 
 /* -------------------------------------------------------------------------- */
 /* Status codes                                                               */
@@ -265,6 +265,30 @@ AUDIOCPP_API int32_t /* audiocpp_status */ audiocpp_session_run(
  * 3 checks per AR frame (sub-second) and per flow chunk (tens of seconds).
  */
 AUDIOCPP_API int32_t /* audiocpp_status */ audiocpp_cancel_request(void);
+
+/*
+ * Suspends the running generation at its next checkpoint, and resumes it.
+ *
+ * Same threading contract as audiocpp_cancel_request, and for the same reason:
+ * the caller of audiocpp_session_run is blocked inside it and cannot ask
+ * itself to stop.
+ *
+ * Pausing blocks the running thread rather than unwinding it. A resumed run
+ * therefore produces exactly the audio it would have produced uninterrupted --
+ * nothing is torn down and no sampling state is reconstructed. The cost is that
+ * the model stays resident for the whole pause, which for MiniMax Music 3 is
+ * several gigabytes and varies by phase, so an indefinite pause is an
+ * indefinite hold on that memory.
+ *
+ * audiocpp_cancel_request wakes a paused run. Nothing else does, so a caller
+ * that pauses and then waits on the run without resuming or cancelling it will
+ * wait forever.
+ *
+ * Resuming a run that is not paused does nothing, as does pausing one that is
+ * already paused or already stopping.
+ */
+AUDIOCPP_API int32_t /* audiocpp_status */ audiocpp_pause_request(void);
+AUDIOCPP_API int32_t /* audiocpp_status */ audiocpp_resume_request(void);
 
 /* -------------------------------------------------------------------------- */
 /* Audio results                                                              */

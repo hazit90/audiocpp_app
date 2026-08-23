@@ -351,10 +351,13 @@ class _RunningStrip extends StatelessWidget {
     final theme = Theme.of(context);
     final elapsed = queue.runningElapsed;
     final remaining = queue.runningEstimatedRemaining;
+    final paused = queue.isRunPaused;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-      color: AppTheme.accent.withValues(alpha: 0.06),
+      color: paused
+          ? theme.colorScheme.surfaceContainerHighest
+          : AppTheme.accent.withValues(alpha: 0.06),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -362,9 +365,11 @@ class _RunningStrip extends StatelessWidget {
             children: <Widget>[
               Expanded(
                 child: Text(
-                  'Generating',
+                  paused ? 'Paused' : 'Generating',
                   style: theme.textTheme.labelSmall?.copyWith(
-                    color: AppTheme.accent,
+                    color: paused
+                        ? theme.colorScheme.onSurfaceVariant
+                        : AppTheme.accent,
                     letterSpacing: 0.6,
                   ),
                 ),
@@ -385,14 +390,36 @@ class _RunningStrip extends StatelessWidget {
           const SizedBox(height: 6),
           Text(track.title, overflow: TextOverflow.ellipsis),
           const SizedBox(height: 8),
-          const LinearProgressIndicator(minHeight: 3),
+          // Determinate and unmoving while paused: an indeterminate bar keeps
+          // sweeping, which is the one thing a paused run must not look like.
+          LinearProgressIndicator(
+            minHeight: 3,
+            value: paused ? 0 : null,
+            color: paused ? theme.colorScheme.onSurfaceVariant : null,
+          ),
           const SizedBox(height: 4),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: () => queue.cancel(track.id),
-              child: const Text('Stop'),
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: <Widget>[
+              if (paused)
+                Expanded(
+                  child: Text(
+                    'Holding the model in memory',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              TextButton(
+                onPressed: () => queue.setRunPaused(!paused),
+                child: Text(paused ? 'Resume' : 'Pause'),
+              ),
+              const SizedBox(width: 4),
+              TextButton(
+                onPressed: () => queue.cancel(track.id),
+                child: const Text('Stop'),
+              ),
+            ],
           ),
         ],
       ),

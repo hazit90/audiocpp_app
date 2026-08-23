@@ -58,7 +58,7 @@ final class OwnQueue {
   }
 }
 
-Future<OwnQueue> ownQueue({Duration? stopGrace}) async {
+Future<OwnQueue> ownQueue({Duration? stopGrace, Duration? pauseLimit}) async {
   final root = await Directory.systemTemp.createTemp('audiocpp_dispose_test');
   final store = TrackStore(root: root);
   await store.load();
@@ -68,6 +68,7 @@ Future<OwnQueue> ownQueue({Duration? stopGrace}) async {
     engine: engine,
     resolveModelPath: (String id) async => '/models/$id',
     stopGrace: stopGrace ?? const Duration(milliseconds: 400),
+    pauseLimit: pauseLimit ?? const Duration(minutes: 10),
   );
   queue.restore();
   return OwnQueue(queue, engine, root);
@@ -395,6 +396,87 @@ void main() {
 
     engine.release();
     await drained(queue);
+  });
+
+  test('pausing suspends the run rather than ending it', () async {
+    engine.hold();
+    final first = await add('first');
+    await started(engine);
+
+    queue.setRunPaused(true);
+    expect(queue.isRunPaused, isTrue);
+    // The track is still there and still running; pause is not a discard.
+    expect(store.tracks.single.id, first.id);
+    expect(store.tracks.single.status, TrackStatus.running);
+
+    queue.setRunPaused(false);
+    expect(queue.isRunPaused, isFalse);
+
+    engine.release();
+    await drained(queue);
+
+    // And it produced its audio, because nothing was torn down.
+    expect(store.tracks.single.status, TrackStatus.done);
+  });
+
+  test('a paused run is still stoppable', () async {
+    engine.hold();
+    final first = await add('first');
+    await started(engine);
+    queue.setRunPaused(true);
+
+    // The engine wakes a paused run on cancel; if the queue did not follow, a
+    // paused generation could never be stopped at all.
+    await queue.cancel(first.id);
+    expect(queue.isRunPaused, isFalse);
+
+    engine.release();
+    await drained(queue);
+    expect(store.tracks, isEmpty);
+  });
+
+  test('paused time is left out of the elapsed readout', () async {
+    engine.hold();
+    await add('first');
+    await started(engine);
+
+    queue.setRunPaused(true);
+    final atPause = queue.runningElapsed!;
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    final afterWaiting = queue.runningElapsed!;
+
+    // The machine did nothing in between, so neither should the clock.
+    expect(
+      (afterWaiting - atPause).inMilliseconds.abs(),
+      lessThan(100),
+    );
+
+    queue.setRunPaused(false);
+    engine.release();
+    await drained(queue);
+  });
+
+  test('a pause left alone becomes a stop', () async {
+    final own = await ownQueue(pauseLimit: const Duration(milliseconds: 150));
+    own.engine.hold();
+    final first = await own.queue.enqueue(
+      params: const GenerationParams(caption: 'first', lyrics: ''),
+      modelPackageId: 'minimax_music3_q4_0',
+      title: 'first',
+    );
+    await started(own.engine);
+    own.queue.setRunPaused(true);
+    expect(own.queue.isRunPaused, isTrue);
+    expect(first.id, isNotEmpty);
+
+    // Holding gigabytes indefinitely is not something to leave to the user
+    // remembering, so the pause expires into the stop they could have asked for.
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    expect(own.queue.isAbandoned(first.id), isTrue);
+    expect(own.queue.isRunPaused, isFalse);
+
+    own.engine.release();
+    await own.cleanUp();
   });
 
   test('clearing the queue drops what is waiting and spares what is running',

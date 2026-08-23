@@ -117,6 +117,28 @@ final class AudioCppEngine {
     AudioCppLibrary.instance.audiocpp_cancel_request();
   }
 
+  /// Suspends the generation in flight at its next checkpoint.
+  ///
+  /// Same isolate story as [requestCancel], and the same reason: the worker is
+  /// blocked inside the run, so this goes straight to the library.
+  ///
+  /// A paused run keeps the model resident -- gigabytes, for a large one --
+  /// because that is precisely why resuming produces the audio the run would
+  /// have produced anyway. Nothing is torn down and no sampling state is
+  /// rebuilt.
+  ///
+  /// Only [requestCancel] wakes a paused run. Nothing else does, so a caller
+  /// that pauses and then awaits the run without resuming or cancelling waits
+  /// forever.
+  void requestPause() {
+    AudioCppLibrary.instance.audiocpp_pause_request();
+  }
+
+  /// Lets a paused generation carry on. Harmless if it is not paused.
+  void requestResume() {
+    AudioCppLibrary.instance.audiocpp_resume_request();
+  }
+
   /// Shuts the worker down, releasing every handle it still owns.
   Future<void> dispose() async {
     if (_disposed) {

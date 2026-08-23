@@ -27,6 +27,7 @@ final class GenerationQueue extends ChangeNotifier {
     required this.engine,
     required this.resolveModelPath,
     this.stopGrace = const Duration(milliseconds: 400),
+    this.pauseLimit = const Duration(minutes: 10),
   });
 
   final TrackStore store;
@@ -38,6 +39,13 @@ final class GenerationQueue extends ChangeNotifier {
   /// Injectable so a test can assert both sides of it outright, rather than
   /// racing a wall clock that a loaded machine will lose.
   final Duration stopGrace;
+
+  /// How long a run may stay paused before it is stopped instead.
+  ///
+  /// A pause holds the whole model in memory, so an indefinite one is an
+  /// indefinite hold on several gigabytes with nothing on screen to prompt the
+  /// user. Injectable for the same reason as [stopGrace].
+  final Duration pauseLimit;
 
   /// Ids the user gave up on.
   ///
@@ -62,6 +70,20 @@ final class GenerationQueue extends ChangeNotifier {
   /// When a stop was last asked for, so [isStopping] can stay quiet while the
   /// engine is still likely to be unwinding.
   DateTime? _stopRequestedAt;
+
+  /// When the current pause began, if the run is paused.
+  DateTime? _pausedAt;
+
+  /// Paused time already accumulated in this run.
+  ///
+  /// Held apart from the start time because it has to come out of two separate
+  /// numbers: what the UI shows as elapsed, and the sample the next estimate is
+  /// extrapolated from. Leaving it in the latter would teach the queue that a
+  /// run costs however long the user left it paused.
+  Duration _pausedTotal = Duration.zero;
+
+  /// Converts a forgotten pause into a stop; see [pauseLimit].
+  Timer? _pauseDeadline;
   Timer? _ticker;
   bool _disposed = false;
 
@@ -123,10 +145,28 @@ final class GenerationQueue extends ChangeNotifier {
   int get waitingCount =>
       pending.where((Track t) => t.status == TrackStatus.queued).length;
 
-  /// How long the current generation has been running.
+  /// Whether the generation in flight is suspended.
+  bool get isRunPaused => _pausedAt != null;
+
+  /// How long the current generation has spent generating.
+  ///
+  /// Excludes time spent paused: that is time the machine was idle, and
+  /// counting it would make the readout a stopwatch rather than a measure of
+  /// the work done.
   Duration? get runningElapsed {
     final startedAt = _runningStartedAt;
-    return startedAt == null ? null : DateTime.now().difference(startedAt);
+    if (startedAt == null) {
+      return null;
+    }
+    return DateTime.now().difference(startedAt) - _pausedSoFar();
+  }
+
+  /// Paused time in this run, including a pause still in progress.
+  Duration _pausedSoFar() {
+    final since = _pausedAt;
+    return since == null
+        ? _pausedTotal
+        : _pausedTotal + DateTime.now().difference(since);
   }
 
   /// Rough time left on the current generation.
@@ -236,6 +276,14 @@ final class GenerationQueue extends ChangeNotifier {
     if (track.status == TrackStatus.running) {
       _abandoned.add(id);
       _stopRequestedAt = DateTime.now();
+      // Cancelling wakes a paused run in the engine, so the bookkeeping here
+      // has to follow or the elapsed readout keeps subtracting a pause that
+      // has already ended.
+      if (_pausedAt != null) {
+        _pausedTotal += DateTime.now().difference(_pausedAt!);
+        _pausedAt = null;
+        _startTicker();
+      }
       // Asks the engine to stop. It is honoured between units of work, so the
       // run still takes a moment to unwind -- and may not be honoured at all if
       // it is already past its last check. _abandoned stays the backstop for
@@ -260,6 +308,40 @@ final class GenerationQueue extends ChangeNotifier {
     // One write rather than one per track: nothing queued has audio to delete,
     // which is the only thing `remove` would add here.
     await store.replaceAll(keep);
+    _notify();
+  }
+
+  /// Suspends or resumes the generation in flight.
+  ///
+  /// Distinct from cancelling: the run keeps its place and its memory, so
+  /// resuming produces the track that would have been produced anyway. Nothing
+  /// happens if there is no run.
+  void setRunPaused(bool value) {
+    if (_runningTrack == null || value == isRunPaused) {
+      return;
+    }
+    if (value) {
+      _pausedAt = DateTime.now();
+      engine.requestPause();
+      _stopTicker();
+      // A pause holds the model resident -- gigabytes, for this family -- and
+      // unlike a run it has no natural end. Left alone it would sit there until
+      // the app closed, with that memory quietly spoken for, so it converts
+      // itself into the stop the user could have asked for.
+      _pauseDeadline = Timer(pauseLimit, () {
+        final running = _runningTrack;
+        if (isRunPaused && running != null) {
+          unawaited(cancel(running.id));
+        }
+      });
+    } else {
+      _pausedTotal += DateTime.now().difference(_pausedAt!);
+      _pausedAt = null;
+      engine.requestResume();
+      _startTicker();
+      _pauseDeadline?.cancel();
+      _pauseDeadline = null;
+    }
     _notify();
   }
 
@@ -362,6 +444,8 @@ final class GenerationQueue extends ChangeNotifier {
     _runningId = track.id;
     _runningTrack = track;
     _runningStartedAt = DateTime.now();
+    _pausedAt = null;
+    _pausedTotal = Duration.zero;
     _startTicker();
     await store.upsert(track.copyWith(status: TrackStatus.running));
     _notify();
@@ -388,7 +472,7 @@ final class GenerationQueue extends ChangeNotifier {
       // Recorded even when abandoned below: the work still happened, and the
       // next estimate is better for knowing what it cost.
       _lastRun = TimingSample(
-        elapsed: DateTime.now().difference(_runningStartedAt!),
+        elapsed: DateTime.now().difference(_runningStartedAt!) - _pausedSoFar(),
         workUnits: _workUnits(track.params),
       );
       await store.writeCalibration(_lastRun!);
@@ -434,6 +518,11 @@ final class GenerationQueue extends ChangeNotifier {
       }
     } finally {
       _stopTicker();
+      // Whatever ended the run also ends its pause: leaving the deadline armed
+      // would stop a later, unrelated track.
+      _pauseDeadline?.cancel();
+      _pauseDeadline = null;
+      _pausedAt = null;
       _runningId = null;
       _runningTrack = null;
       _runningStartedAt = null;
@@ -529,11 +618,16 @@ final class GenerationQueue extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _stopTicker();
+    _pauseDeadline?.cancel();
     // Quitting is a discard of everything in flight, so treat it as one. The
     // run holds the worker isolate and every teardown command queued behind it,
     // which is what made closing the app mid-generation hang; and the result
     // has nowhere to go now regardless.
     if (_runningTrack != null) {
+      // requestCancel wakes a paused run too, which matters here more than
+      // anywhere: a paused run reaches no further checkpoint on its own, so
+      // without this the teardown behind it would wait forever rather than
+      // merely a long time.
       engine.requestCancel();
     }
     super.dispose();

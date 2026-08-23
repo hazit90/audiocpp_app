@@ -263,6 +263,28 @@ class AudioCppBindings {
   late final _audiocpp_cancel_request = _audiocpp_cancel_requestPtr
       .asFunction<int Function()>();
 
+  int audiocpp_pause_request() {
+    return _audiocpp_pause_request();
+  }
+
+  late final _audiocpp_pause_requestPtr =
+      _lookup<ffi.NativeFunction<ffi.Int32 Function()>>(
+        'audiocpp_pause_request',
+      );
+  late final _audiocpp_pause_request = _audiocpp_pause_requestPtr
+      .asFunction<int Function()>();
+
+  int audiocpp_resume_request() {
+    return _audiocpp_resume_request();
+  }
+
+  late final _audiocpp_resume_requestPtr =
+      _lookup<ffi.NativeFunction<ffi.Int32 Function()>>(
+        'audiocpp_resume_request',
+      );
+  late final _audiocpp_resume_request = _audiocpp_resume_requestPtr
+      .asFunction<int Function()>();
+
   /// -------------------------------------------------------------------------- */
   /// /* Audio results                                                              */
   /// /* --------------------------------------------------------------------------
@@ -545,4 +567,4 @@ final class audiocpp_request extends ffi.Struct {
 
 const int AUDIOCPP_FFI_ABI_VERSION_MAJOR = 1;
 
-const int AUDIOCPP_FFI_ABI_VERSION_MINOR = 1;
+const int AUDIOCPP_FFI_ABI_VERSION_MINOR = 2;

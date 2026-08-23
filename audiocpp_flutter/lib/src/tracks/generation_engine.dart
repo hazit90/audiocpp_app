@@ -53,6 +53,15 @@ abstract interface class GenerationEngine {
   /// units of work, so the run it stops may take a little longer to unwind.
   /// Safe to call with nothing running.
   void requestCancel();
+
+  /// Suspends the run in flight at its next checkpoint.
+  ///
+  /// The model stays resident while paused, which is what lets the run carry on
+  /// afterwards as though it had never stopped. Only [requestCancel] wakes it.
+  void requestPause();
+
+  /// Lets a paused run carry on. Harmless if it is not paused.
+  void requestResume();
 }
 
 /// Raised by [GenerationEngine.runToFile] when the run was stopped on request.
