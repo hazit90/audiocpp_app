@@ -85,6 +85,10 @@ Everything it does is also available from a terminal:
 cd audiocpp_flutter && flutter run -d macos
 ```
 
+For iOS, `./packages/audiocpp/tool/setup_ios.sh` is the equivalent, then
+`flutter run` with a device selected. Read *Scope today* first: the port works,
+but no published MiniMax Music 3 package fits in an iOS process.
+
 `setup_macos.sh` is cheap to re-run: it rebuilds the native library only when
 the shim sources, the build script, or the pinned audio.cpp revision changed,
 and exits in well under a second otherwise. A cold build is about 45 seconds.
@@ -119,6 +123,8 @@ python3 tools/model_manager_v2.py install minimax_music3_q4_0
   are all pinned there and must stay in step.
 - Apple silicon for Metal acceleration. Intel Macs fall back to the CPU backend.
 - CMake. Ninja is optional but much faster than make on this tree.
+- For iOS: Xcode with the iOS platform installed, and a device on iOS 16.3 or
+  newer — the same `std::to_chars` gate as macOS 13.3.
 
 ## Development
 
@@ -156,7 +162,16 @@ upstream is free to reshape.
 
 ## Scope today
 
-- macOS only. The C ABI and CMake are portable; only the packaging is not.
+- macOS is the only platform that can currently generate a track. Windows and
+  Linux have no packaging; iOS has full packaging but no model that fits.
+- iOS builds, links and runs. The shim cross-compiles to a static
+  `audiocpp.xcframework`, the engine initialises on device, enumerates Metal and
+  resolves its embedded specs. Loading a model then fails with `std::bad_alloc`:
+  the smallest published MiniMax Music 3 package is 7.9 GB across five GGUFs
+  (5.6 GB of it the language model), against an iOS per-process memory limit
+  well below that. Raising the limit needs the `increased-memory-limit` and
+  `extended-virtual-addressing` entitlements, which Apple does not issue to a
+  free personal development team. See `CLAUDE.md` for the detail.
 - Offline inference only — no streaming, which the ABI would have to grow
   deliberately. MiniMax Music 3 is offline-only regardless.
 - No cancellation or progress reporting: audio.cpp exposes no hook for either on

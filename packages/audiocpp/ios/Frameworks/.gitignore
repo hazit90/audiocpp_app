@@ -1,0 +1,5 @@
+# Build output of tool/build_ios.sh. Rebuilt locally, never committed.
+*.xcframework
+
+# Staleness marker written by tool/setup_ios.sh.
+.build-stamp

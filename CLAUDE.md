@@ -9,6 +9,7 @@ audio inference), integrated via Dart FFI. See `README.md` for setup.
 |---|---|
 | `third_party/audio.cpp` | Git submodule, pinned. **Never edit** — changes here are lost on update. Patch upstream or work around it in the shim. |
 | `packages/audiocpp/src/` | The C shim: `audiocpp_ffi.h` (ABI) + `audiocpp_ffi.cpp` + CMake. |
+| `packages/audiocpp/macos/`, `ios/` | Per-platform pods. macOS vendors a dylib, iOS an xcframework of static slices. |
 | `packages/audiocpp/lib/` | Dart: generated bindings, `NativeBridge`, worker isolate, typed API. |
 | `audiocpp_flutter/lib/src/tracks/` | The app's core: `Track`, `TrackStore`, `GenerationQueue`, `GenerationEngine`. No widgets. |
 | `audiocpp_flutter/lib/src/` | The app: `create/`, `library/`, `player/`, `models/` panes over that core. |
@@ -36,6 +37,41 @@ nm -gU packages/audiocpp/macos/Libs/libaudiocpp_ffi.dylib | grep -c ' T '
 ```
 
 It should equal the number of `AUDIOCPP_API` functions.
+
+**iOS links the shim statically, and four things conspire to break that.**
+Each is silent -- the app builds clean and fails on device -- so all four live
+in `ios/audiocpp.podspec` with the reason written next to them:
+
+1. Dart reaches the entry points through `dlsym`, so nothing references them at
+   link time and the linker never pulls them out of the archive. `-force_load`.
+2. Release then dead-strips what `-force_load` just brought in, for the same
+   reason. `-Wl,-u,_<symbol>` per entry point makes each a dead-strip root; the
+   podspec reads the list out of the header so a new `AUDIOCPP_API` function
+   cannot silently go missing.
+3. `-dead_strip` *also* removes the embedded model-spec table, which no `-u`
+   flag reaches (212 spec strings in a debug build, 0 in release, every model
+   load failing with "spec not found"). Hence `DEAD_CODE_STRIPPING = NO`.
+   The macOS dylib escapes all of this only because CMake does not pass
+   `-dead_strip` when linking a shared library.
+4. An `OTHER_LDFLAGS[sdk=...]` line *replaces* the unconditional one instead of
+   adding to it, silently dropping every other pod's flags. Only the slice name
+   is SDK-conditional; `OTHER_LDFLAGS` itself stays plain.
+
+`-force_load` points into the vendored xcframework rather than the copy
+CocoaPods unpacks: Xcode validates the app target's linker inputs before the
+pod's copy phase runs.
+
+**A model has to fit in an iOS process, and MiniMax Music 3 does not.**
+Loading q4_0 on device fails with `std::bad_alloc`: 7.9 GB across five GGUFs,
+5.6 GB of it the language model alone, and the weights are real backend buffers
+-- `gguf_init_from_file` then `ggml_backend_alloc_ctx_tensors`, with no
+llama.cpp-style mmap path to fall back on. q4_0 is the smallest package
+upstream publishes. Raising the ceiling needs
+`com.apple.developer.kernel.increased-memory-limit` and
+`extended-virtual-addressing` in a `Runner.entitlements`, which a **free
+personal team cannot sign** -- Xcode refuses the profile outright. Everything
+else in the iOS port works; this is the only thing standing between the app and
+a generated track.
 
 **Bump the ABI version on a breaking change.** `AUDIOCPP_FFI_ABI_VERSION_MAJOR`
 in the header and `AudioCppLibrary.expectedAbiMajor` in
@@ -94,6 +130,9 @@ dart run ffigen --config ffigen.yaml   # regenerate bindings (committed)
 flutter test
 ```
 
+`./tool/setup_ios.sh` is the iOS twin, same staleness contract. It builds a
+device slice only; `SIMULATOR=1` adds a simulator one.
+
 ## Build settings that are load-bearing
 
 - `CMAKE_OSX_DEPLOYMENT_TARGET=13.3` — audio.cpp calls `std::to_chars` on floats;
@@ -105,10 +144,26 @@ flutter test
 - `AUDIOCPP_MODEL_SET=custom` + `AUDIOCPP_MODELS` — only linked families can be
   loaded. Adding a model means adding it here and rebuilding.
 - `ENGINE_ENABLE_OPENMP=OFF` — macOS clang ships no libomp by default.
+- iOS deployment target `16.3` — the same libc++ `std::to_chars` gate as macOS
+  13.3. Must match `build_ios.sh`, the iOS podspec, the Podfile's
+  `platform :ios` and `IPHONEOS_DEPLOYMENT_TARGET`.
+- `ENGINE_ENABLE_NATIVE_CPU=OFF` on iOS — host ISA flags are meaningless when
+  cross-compiling.
 
 ## Gotchas found the hard way
 
 - ggml registers the Metal backend under the name `MTL`, not `Metal`.
+- sentencepiece's `if (CMAKE_SYSTEM_NAME STREQUAL "iOS")` branch calls
+  `set_xcode_property()`, a macro only the third-party `ios.toolchain.cmake`
+  defines. We use CMake's own iOS support, so `src/CMakeLists.txt` defines a
+  no-op macro before `add_subdirectory` — everything it touches is an `spm_*`
+  tool we never build.
+- CocoaPods derives a vendored static library's `-l` flag by stripping a leading
+  `lib`, so the merged archive must be named `libaudiocpp_ffi.a`. It also
+  de-duplicates `OTHER_LDFLAGS` tokens, which collapses eighteen `-u _sym`
+  flags into one — `-Wl,-u,_sym` keeps them distinct.
+- A CMake `STATIC` target does not absorb the libraries it links, so
+  `build_ios.sh` merges every archive the build produced with `libtool`.
 - The vendored dylib lands in `<App>.app/Contents/Frameworks/` but nothing links
   it into the executable, so `DynamicLibrary.process()` cannot see it and a bare
   `dlopen` name does not search `@rpath`. `library.dart` resolves it absolutely

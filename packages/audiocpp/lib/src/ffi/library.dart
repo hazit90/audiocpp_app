@@ -30,7 +30,7 @@ abstract final class AudioCppLibrary {
     if (bindings == null) {
       throw AudioCppLibraryNotFoundException(
         'Could not open libaudiocpp_ffi. Build it with '
-        'packages/audiocpp/tool/build_macos.sh, or set '
+        'packages/audiocpp/tool/build_macos.sh (or build_ios.sh), or set '
         '$pathEnvironmentVariable to an existing binary.',
         searchedPaths: searched,
       );
@@ -74,6 +74,11 @@ abstract final class AudioCppLibrary {
   /// Path to the copy embedded in the running app bundle, or null when the
   /// process is not running from one (tests, `dart run`).
   static String? _bundledLibraryPath() {
+    // iOS links the shim statically into the app binary (see the iOS podspec),
+    // so there is no file to open -- the symbols are already in the process.
+    if (Platform.isIOS) {
+      return null;
+    }
     final executableDir = File(Platform.resolvedExecutable).parent;
     if (Platform.isMacOS) {
       // <App>.app/Contents/MacOS/<exe> -> <App>.app/Contents/Frameworks/
@@ -89,6 +94,13 @@ abstract final class AudioCppLibrary {
     final override = overridePath;
     if (override != null) {
       yield override;
+    }
+
+    // On iOS the only place the symbols can be is the running executable, and
+    // every filesystem candidate below would just be a slow way to fail.
+    if (Platform.isIOS) {
+      yield _processSentinel;
+      return;
     }
 
     final fromEnvironment = Platform.environment[pathEnvironmentVariable];
