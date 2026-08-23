@@ -37,6 +37,41 @@ Future<void> drained(GenerationQueue queue) async {
   await pump();
 }
 
+/// A queue with its own store, engine and directory.
+///
+/// For tests that dispose the queue themselves and so must not collide with the
+/// shared teardown disposing it a second time.
+final class OwnQueue {
+  OwnQueue(this.queue, this.engine, this._root);
+
+  final GenerationQueue queue;
+  final FakeEngine engine;
+  final Directory _root;
+
+  Future<void> cleanUp() async {
+    for (var i = 0; i < 200 && queue.isBusy; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+    }
+    if (_root.existsSync()) {
+      await _root.delete(recursive: true);
+    }
+  }
+}
+
+Future<OwnQueue> ownQueue() async {
+  final root = await Directory.systemTemp.createTemp('audiocpp_dispose_test');
+  final store = TrackStore(root: root);
+  await store.load();
+  final engine = FakeEngine();
+  final queue = GenerationQueue(
+    store: store,
+    engine: engine,
+    resolveModelPath: (String id) async => '/models/$id',
+  );
+  queue.restore();
+  return OwnQueue(queue, engine, root);
+}
+
 void main() {
   late Directory root;
   late TrackStore store;
@@ -276,6 +311,35 @@ void main() {
     expect(engine.runs.map((GenerationParams p) => p.caption),
         <String>['second']);
     expect(store.tracks.single.status, TrackStatus.done);
+  });
+
+  test('disposing while a generation runs asks it to stop', () async {
+    // Its own queue: these tests dispose the thing under test, and the shared
+    // teardown disposes it again.
+    final own = await ownQueue();
+    own.engine.hold();
+    await own.queue.enqueue(
+      params: const GenerationParams(caption: 'first', lyrics: ''),
+      modelPackageId: 'minimax_music3_q4_0',
+      title: 'first',
+    );
+    await started(own.engine);
+
+    own.queue.dispose();
+
+    // Quitting mid-run would otherwise leave every teardown command queued
+    // behind a generation with minutes left on it.
+    expect(own.engine.cancelRequests, 1);
+
+    own.engine.release();
+    await own.cleanUp();
+  });
+
+  test('disposing with nothing running asks for nothing', () async {
+    final own = await ownQueue();
+    own.queue.dispose();
+    expect(own.engine.cancelRequests, 0);
+    await own.cleanUp();
   });
 
   test('a cancel with nothing running does not stop the next track', () async {

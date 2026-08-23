@@ -505,6 +505,13 @@ final class GenerationQueue extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _stopTicker();
+    // Quitting is a discard of everything in flight, so treat it as one. The
+    // run holds the worker isolate and every teardown command queued behind it,
+    // which is what made closing the app mid-generation hang; and the result
+    // has nowhere to go now regardless.
+    if (_runningTrack != null) {
+      engine.requestCancel();
+    }
     super.dispose();
   }
 }

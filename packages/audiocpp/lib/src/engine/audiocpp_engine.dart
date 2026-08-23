@@ -124,6 +124,18 @@ final class AudioCppEngine {
     }
     _disposed = true;
 
+    // A generation in flight owns the worker isolate, so the shutdown below
+    // would sit in its queue until the run finished on its own -- the 30s
+    // timeout would expire and the kill would land on an isolate still inside a
+    // native call. Asking the run to stop first is what makes closing an app
+    // mid-generation take a moment instead of minutes.
+    try {
+      requestCancel();
+    } on AudioCppException {
+      // This isolate never opened the library, so nothing here is running.
+      // Disposing an engine that was never used must not fail.
+    }
+
     final id = _nextRequestId++;
     final completer = Completer<Object?>();
     _pending[id] = completer;

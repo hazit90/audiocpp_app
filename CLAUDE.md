@@ -174,15 +174,27 @@ thread-safe. Discarding a running track removes it from the store at once and
 calls `audiocpp_cancel_request`, and `isFinishingDiscarded` covers the gap until
 the run unwinds -- the track is gone, but the machine is not free yet.
 
-Cancellation is honoured *between units of work*, never mid-step: sub-second in
-the autoregressive phase, up to tens of seconds in flow, and not at all once a
-run is past its last check. So `_abandoned` stays as the backstop, the UI says
+Cancellation is honoured *between units of work*, never mid-step: measured at
+67ms during the autoregressive phase and 122ms 180s into a run, but not at all
+once a run is past its last check. So `_abandoned` stays as the backstop, the UI says
 "stops at the end of the current step" rather than implying instant, and a
 cancelled run is `AUDIOCPP_CANCELLED` / `GenerationCancelled` -- never a
 failure, or the user gets an error they caused on purpose.
 
 There is still no step callback: elapsed time and an extrapolated estimate are
 all we can honestly show.
+
+**Model loading is the one stretch that still cannot be interrupted.** It is
+also the longest, and the engine clears its cancel flag when a run starts -- so
+a discard during the load would be erased and the generation would go ahead in
+full. `_run` asks `_abandoned` once more after the load for exactly that reason;
+do not remove it without making the load itself cancellable.
+
+**Disposing cancels first.** A run owns the worker isolate, so every teardown
+command queues behind it: without this, closing the app mid-generation waits out
+`AudioCppEngine.dispose`'s 30s timeout and then kills an isolate still inside a
+native call. Both `GenerationQueue.dispose` and `AudioCppEngine.dispose` ask for
+a stop before tearing anything down.
 
 **The cancel call must not be a worker command.** The worker isolate is blocked
 inside `audiocpp_session_run` for the whole generation, so a `WorkerCommand`
