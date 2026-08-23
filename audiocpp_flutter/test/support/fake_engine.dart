@@ -32,6 +32,7 @@ final class FakeEngine implements GenerationEngine {
   List<int> producedPeaks = const <int>[0, 128, 255, 64];
 
   Completer<void>? _gate;
+  Completer<void>? _loadGate;
 
   /// Mirrors the real engine: set by [requestCancel], cleared when a run
   /// starts, and honoured at one point mid-run rather than instantly.
@@ -49,9 +50,24 @@ final class FakeEngine implements GenerationEngine {
     _gate = null;
   }
 
+  /// Makes the next [loadModel] block until [releaseLoad] is called.
+  ///
+  /// Loading a real package is gigabytes and the longest stretch of a first
+  /// generation, which makes it the widest window for a cancel to land in.
+  void holdLoad() => _loadGate = Completer<void>();
+
+  void releaseLoad() {
+    _loadGate?.complete();
+    _loadGate = null;
+  }
+
   @override
   Future<void> loadModel(String modelPath) async {
     loads.add(modelPath);
+    final gate = _loadGate;
+    if (gate != null) {
+      await gate.future;
+    }
     if (loadSilentlyFails) {
       errorMessage = 'no such package';
       return;

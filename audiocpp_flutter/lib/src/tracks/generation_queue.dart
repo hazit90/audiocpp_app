@@ -346,6 +346,16 @@ final class GenerationQueue extends ChangeNotifier {
     try {
       await _ensureModelLoaded(track.modelPackageId);
 
+      // A discard during the model load is aimed at this run, but the engine
+      // clears its own flag when a run starts -- deliberately, so a stale
+      // cancel cannot stop the next track. Asking here is what stops the two
+      // from cancelling each other out and leaving the user watching a run
+      // they stopped minutes ago. Loading is the longest uninterruptible
+      // stretch in the app, so this window is not a narrow one.
+      if (_abandoned.contains(track.id)) {
+        throw const GenerationCancelled();
+      }
+
       final fileName = store.audioFileNameFor(track);
       final outcome = await engine.runToFile(
         params: track.params,

@@ -15,6 +15,19 @@ Future<void> pump() async {
   }
 }
 
+/// Waits until the engine has actually begun a run.
+///
+/// `pump()` is not enough for anything that means "cancel a generation in
+/// flight": the queue writes to disk and loads a model first, and a cancel that
+/// arrives during the load takes a different path on purpose -- the run is
+/// skipped rather than stopped. Waiting for the run to start is what keeps the
+/// two cases apart instead of racing between them.
+Future<void> started(FakeEngine engine) async {
+  for (var i = 0; i < 500 && engine.runs.isEmpty; i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 2));
+  }
+}
+
 /// Waits until the queue has nothing left to run. Bounded so a bug stalls one
 /// test rather than the suite.
 Future<void> drained(GenerationQueue queue) async {
@@ -181,7 +194,7 @@ void main() {
       () async {
     engine.hold();
     final first = await add('first');
-    await pump();
+    await started(engine);
 
     await queue.cancel(first.id);
     // Gone from the library immediately: "discard" means the same thing whether
@@ -204,7 +217,7 @@ void main() {
     engine.hold();
     final first = await add('first');
     await add('second');
-    await pump();
+    await started(engine);
 
     await queue.cancel(first.id);
     expect(engine.cancelRequests, 1);
@@ -221,7 +234,7 @@ void main() {
   test('a cancelled run is not a failure', () async {
     engine.hold();
     final first = await add('first');
-    await pump();
+    await started(engine);
 
     await queue.cancel(first.id);
     engine.release();
@@ -230,6 +243,39 @@ void main() {
     // Nothing left behind at all: no track, and in particular no failed one
     // carrying an error the user never caused.
     expect(store.tracks, isEmpty);
+  });
+
+  test('discarding during the model load stops the run that follows it',
+      () async {
+    // The engine clears its cancel flag when a run starts, so a discard during
+    // the load would otherwise be erased and the generation would go ahead in
+    // full -- minutes of work the user already stopped.
+    engine.holdLoad();
+    final first = await add('first');
+    await pump();
+
+    await queue.cancel(first.id);
+    engine.releaseLoad();
+    await drained(queue);
+
+    expect(engine.runs, isEmpty);
+    expect(store.tracks, isEmpty);
+  });
+
+  test('a discard during the load does not stop the track behind it', () async {
+    engine.holdLoad();
+    final first = await add('first');
+    await add('second');
+    await pump();
+
+    await queue.cancel(first.id);
+    engine.releaseLoad();
+    await drained(queue);
+
+    // Only the discarded one is skipped; the queue carries on normally.
+    expect(engine.runs.map((GenerationParams p) => p.caption),
+        <String>['second']);
+    expect(store.tracks.single.status, TrackStatus.done);
   });
 
   test('a cancel with nothing running does not stop the next track', () async {
@@ -245,7 +291,7 @@ void main() {
   test('discarding a running track leaves no audio behind', () async {
     engine.hold();
     final first = await add('first');
-    await pump();
+    await started(engine);
     await queue.cancel(first.id);
 
     engine.release();
@@ -267,7 +313,7 @@ void main() {
     engine.hold();
     final running = await add('running');
     await add('waiting');
-    await pump();
+    await started(engine);
 
     await queue.cancel(running.id);
     // The discarded work still occupies the engine, so the track waiting behind
@@ -285,7 +331,7 @@ void main() {
     final running = await add('running');
     await add('b');
     await add('c');
-    await pump();
+    await started(engine);
 
     await queue.clearQueue();
 

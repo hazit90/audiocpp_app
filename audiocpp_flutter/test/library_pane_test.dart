@@ -85,6 +85,20 @@ void main() {
     return track!;
   }
 
+  /// Waits until the engine has actually begun a run.
+  ///
+  /// Enqueuing is not the same as generating: the queue writes to disk and
+  /// loads a model first, and a discard during the load skips the run rather
+  /// than stopping one. Tests about a generation in flight have to wait for it.
+  Future<void> started(WidgetTester tester) async {
+    await tester.runAsync(() async {
+      for (var i = 0; i < 200 && engine.runs.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+    });
+    await tester.pump();
+  }
+
   /// Lets a store mutation started by a tap run to completion.
   ///
   /// A tap runs in the zone where timers are faked, so everything after the
@@ -124,6 +138,7 @@ void main() {
       (WidgetTester tester) async {
     engine.hold();
     final track = await enqueue(tester, 'first');
+    await started(tester);
     await show(tester);
 
     await tester.tap(find.text('Discard'));
@@ -144,6 +159,7 @@ void main() {
     engine.hold();
     await enqueue(tester, 'running');
     await enqueue(tester, 'waiting');
+    await started(tester);
     await show(tester);
 
     expect(find.text('UP NEXT · 1'), findsOneWidget);
