@@ -121,6 +121,11 @@ class MusicGenerationController extends ChangeNotifier
       final peaks = reducePeaks(await audio.readSamples());
       notifyListeners();
       return GenerationOutcome(duration: duration, peaks: peaks);
+    } on AudioCppCancelledException {
+      // Not a failure, so it does not become controller error state: the user
+      // asked for this and the session is still usable for the next track.
+      notifyListeners();
+      throw const GenerationCancelled();
     } on Object catch (error) {
       _fail(error);
       rethrow;
@@ -130,6 +135,9 @@ class MusicGenerationController extends ChangeNotifier
       await audio?.dispose();
     }
   }
+
+  @override
+  void requestCancel() => _engine?.requestCancel();
 
   /// Prefer the GPU when one is present; ggml picks the device itself.
   AudioCppBackend get _preferredBackend {

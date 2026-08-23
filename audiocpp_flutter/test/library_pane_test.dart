@@ -132,9 +132,10 @@ void main() {
     // The track is gone from the pane entirely — strip, queue and list.
     expect(find.text('first'), findsNothing);
     expect(find.text('Generating'), findsNothing);
-    // What remains is the engine, still busy on work nobody wants.
-    expect(find.text('Discarded'), findsOneWidget);
-    expect(find.textContaining('cannot be interrupted'), findsOneWidget);
+    // What remains is the engine, unwinding: the stop lands between units of
+    // work, not the instant the button is pressed.
+    expect(find.text('Stopping'), findsOneWidget);
+    expect(find.textContaining('end of the current step'), findsOneWidget);
     expect(queue.isAbandoned(track.id), isTrue);
   });
 

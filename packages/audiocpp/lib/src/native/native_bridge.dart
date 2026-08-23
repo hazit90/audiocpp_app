@@ -299,6 +299,11 @@ final class NativeBridge {
       return;
     }
     final message = _bindings.audiocpp_last_error().cast<Utf8>().toDartString();
+    if (status == audiocpp_status.AUDIOCPP_CANCELLED.value) {
+      throw AudioCppCancelledException(
+        message.isEmpty ? 'run cancelled' : message,
+      );
+    }
     throw AudioCppNativeException(
       audiocpp_status.fromValue(status),
       message.isEmpty ? 'failed to $action' : 'failed to $action: $message',

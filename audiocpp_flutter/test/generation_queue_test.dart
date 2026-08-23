@@ -200,6 +200,48 @@ void main() {
     expect(queue.isFinishingDiscarded, isFalse);
   });
 
+  test('discarding the running track asks the engine to stop', () async {
+    engine.hold();
+    final first = await add('first');
+    await add('second');
+    await pump();
+
+    await queue.cancel(first.id);
+    expect(engine.cancelRequests, 1);
+
+    engine.release();
+    await drained(queue);
+
+    // The stop landed, so the run ended as cancelled rather than producing a
+    // track -- and the queue carried on to the next one regardless.
+    expect(store.tracks.single.title, 'second');
+    expect(store.tracks.single.status, TrackStatus.done);
+  });
+
+  test('a cancelled run is not a failure', () async {
+    engine.hold();
+    final first = await add('first');
+    await pump();
+
+    await queue.cancel(first.id);
+    engine.release();
+    await drained(queue);
+
+    // Nothing left behind at all: no track, and in particular no failed one
+    // carrying an error the user never caused.
+    expect(store.tracks, isEmpty);
+  });
+
+  test('a cancel with nothing running does not stop the next track', () async {
+    // Mirrors the shim clearing its flag when a run starts.
+    engine.requestCancel();
+
+    await add('first');
+    await drained(queue);
+
+    expect(store.tracks.single.status, TrackStatus.done);
+  });
+
   test('discarding a running track leaves no audio behind', () async {
     engine.hold();
     final first = await add('first');

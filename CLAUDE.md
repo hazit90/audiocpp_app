@@ -148,13 +148,28 @@ next to it, not in a widget's `if`.
 
 **One generation at a time, and no faking progress.** `GenerationQueue` drains
 serially because the session holds gigabytes and the handles are not
-thread-safe. The ABI has no cancellation, so discarding a running track removes
-it from the store at once and throws the result away when it lands. The engine
-keeps working, and `isFinishingDiscarded` is what says so: the track is gone, but
-the machine is not free and the next one cannot start. Never let that read as a
-stop, and never let the pane look idle while a discarded run is still going.
-There is no step callback either: elapsed time and an extrapolated estimate are
+thread-safe. Discarding a running track removes it from the store at once and
+calls `audiocpp_cancel_request`, and `isFinishingDiscarded` covers the gap until
+the run unwinds -- the track is gone, but the machine is not free yet.
+
+Cancellation is honoured *between units of work*, never mid-step: sub-second in
+the autoregressive phase, up to tens of seconds in flow, and not at all once a
+run is past its last check. So `_abandoned` stays as the backstop, the UI says
+"stops at the end of the current step" rather than implying instant, and a
+cancelled run is `AUDIOCPP_CANCELLED` / `GenerationCancelled` -- never a
+failure, or the user gets an error they caused on purpose.
+
+There is still no step callback: elapsed time and an extrapolated estimate are
 all we can honestly show.
+
+**The cancel call must not be a worker command.** The worker isolate is blocked
+inside `audiocpp_session_run` for the whole generation, so a `WorkerCommand`
+would sit in its queue until the very run it was meant to stop had finished.
+`AudioCppEngine.requestCancel` therefore calls the library directly from the
+calling isolate. That is sound because Dart statics are per-isolate but `dlopen`
+is not: a second `AudioCppLibrary` handle resolves to the same loaded image, so
+both isolates see the same `std::atomic_bool` in the shim. Nothing is shared
+across the port, so the no-pointers-across-isolates rule still holds.
 
 **Widgets never touch native handles or block.** Anything long-running goes
 through `GenerationQueue`, which talks to the narrow `GenerationEngine`

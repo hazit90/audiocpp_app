@@ -18,6 +18,7 @@ export 'src/engine/audiocpp_engine.dart'
 export 'src/exceptions.dart'
     show
         AudioCppAbiMismatchException,
+        AudioCppCancelledException,
         AudioCppDisposedException,
         AudioCppException,
         AudioCppLibraryNotFoundException,

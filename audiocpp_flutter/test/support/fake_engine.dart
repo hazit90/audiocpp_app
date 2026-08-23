@@ -33,6 +33,14 @@ final class FakeEngine implements GenerationEngine {
 
   Completer<void>? _gate;
 
+  /// Mirrors the real engine: set by [requestCancel], cleared when a run
+  /// starts, and honoured at one point mid-run rather than instantly.
+  bool _cancelRequested = false;
+
+  /// How many times a cancel was asked for, so a test can tell "the queue
+  /// called through" from "the run happened to end".
+  int cancelRequests = 0;
+
   /// Makes the next run block until [release] is called.
   void hold() => _gate = Completer<void>();
 
@@ -52,16 +60,31 @@ final class FakeEngine implements GenerationEngine {
   }
 
   @override
+  void requestCancel() {
+    cancelRequests++;
+    _cancelRequested = true;
+  }
+
+  @override
   Future<GenerationOutcome> runToFile({
     required GenerationParams params,
     required File output,
   }) async {
     runs.add(params);
+    // Cleared on entry, like the shim: a cancel with nothing running must not
+    // stop whatever starts next.
+    _cancelRequested = false;
     // Real elapsed time, so the queue's estimate has something to measure.
     await Future<void>.delayed(const Duration(milliseconds: 10));
     final gate = _gate;
     if (gate != null) {
       await gate.future;
+    }
+    // After the gate, standing in for the engine noticing between units of
+    // work rather than the instant the flag is set.
+    if (_cancelRequested) {
+      _cancelRequested = false;
+      throw const GenerationCancelled();
     }
     if (failCaptions.any(params.caption.contains)) {
       throw StateError('out of memory during flow stage');

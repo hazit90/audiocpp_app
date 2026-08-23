@@ -32,9 +32,12 @@ final class GenerationQueue extends ChangeNotifier {
   final GenerationEngine engine;
   final ModelPathResolver resolveModelPath;
 
-  /// Ids the user gave up on. A running generation cannot actually be stopped —
-  /// the C ABI has no cancellation — so the only honest thing to do is let it
-  /// finish and throw the result away.
+  /// Ids the user gave up on.
+  ///
+  /// The engine can now be asked to stop, but only between units of work — and
+  /// a run already past its last check finishes regardless. This is what makes
+  /// that case behave the same as a stop from the outside: the result is thrown
+  /// away when it lands.
   final Set<String> _abandoned = <String>{};
 
   int _nextQueueOrder = 0;
@@ -211,6 +214,11 @@ final class GenerationQueue extends ChangeNotifier {
     }
     if (track.status == TrackStatus.running) {
       _abandoned.add(id);
+      // Asks the engine to stop. It is honoured between units of work, so the
+      // run still takes a moment to unwind -- and may not be honoured at all if
+      // it is already past its last check. _abandoned stays the backstop for
+      // exactly that case.
+      engine.requestCancel();
     }
     await store.remove(id);
     _notify();
@@ -358,11 +366,7 @@ final class GenerationQueue extends ChangeNotifier {
         // now, so delete it here rather than leaving gigabytes for the next
         // startup's orphan sweep to find.
         await store.remove(track.id);
-        final orphan =
-            store.audioFileFor(track.copyWith(audioFileName: fileName));
-        if (orphan != null && orphan.existsSync()) {
-          await orphan.delete();
-        }
+        await _deleteOutput(track);
       } else {
         await store.upsert(
           _find(track.id)!.copyWith(
@@ -376,6 +380,13 @@ final class GenerationQueue extends ChangeNotifier {
           ),
         );
       }
+    } on GenerationCancelled {
+      // The stop landed. The track is already gone from the store -- discarding
+      // removes it up front -- so there is nothing to mark, and nothing to say:
+      // this is the outcome the user asked for.
+      _abandoned.remove(track.id);
+      await store.remove(track.id);
+      _deleteOutput(track);
     } on Object catch (error) {
       _abandoned.remove(track.id);
       final current = _find(track.id);
@@ -394,6 +405,20 @@ final class GenerationQueue extends ChangeNotifier {
       _runningTrack = null;
       _runningStartedAt = null;
       _notify();
+    }
+  }
+
+  /// Deletes the audio a discarded run produced, if it got that far.
+  ///
+  /// The track is out of the index by this point, so nothing points at the
+  /// file and the next startup's orphan sweep is the only other thing that
+  /// would ever find it -- too late to matter on something this large.
+  Future<void> _deleteOutput(Track track) async {
+    final file = store.audioFileFor(
+      track.copyWith(audioFileName: store.audioFileNameFor(track)),
+    );
+    if (file != null && file.existsSync()) {
+      await file.delete();
     }
   }
 
@@ -433,8 +458,9 @@ final class GenerationQueue extends ChangeNotifier {
 
   /// Notifies unless the queue is gone.
   ///
-  /// A generation cannot be stopped, so quitting mid-run leaves the drain loop
-  /// awaiting a call that outlives this object; its completion must not throw.
+  /// A generation is not stopped instantly, so quitting mid-run can leave the
+  /// drain loop awaiting a call that outlives this object; its completion must
+  /// not throw.
   void _notify() {
     if (!_disposed) {
       notifyListeners();

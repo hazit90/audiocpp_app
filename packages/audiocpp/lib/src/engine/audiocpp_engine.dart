@@ -3,6 +3,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import '../exceptions.dart';
+import '../ffi/library.dart';
 import '../types.dart';
 import 'protocol.dart';
 import 'worker.dart';
@@ -94,6 +95,26 @@ final class AudioCppEngine {
   Future<AudioCppModel> loadModel(ModelDescriptor descriptor) async {
     final info = await _send(LoadModelCommand(descriptor)) as LoadedModelInfo;
     return AudioCppModel._(this, info);
+  }
+
+  /// Asks the generation in flight to stop.
+  ///
+  /// Synchronous, and deliberately not a worker command. The worker isolate is
+  /// blocked inside the native call for the whole run, so a message would sit
+  /// in its queue until the very run it was meant to stop had finished. This
+  /// goes straight to the library from the calling isolate instead.
+  ///
+  /// That works because Dart statics are per-isolate but `dlopen` is not: a
+  /// second [AudioCppLibrary] handle resolves to the same loaded image, and so
+  /// to the same flag the worker's run is reading.
+  ///
+  /// Returns without waiting. The stopped run completes as an
+  /// [AudioCppCancelledException] out of [AudioCppSession.run], between units
+  /// of work rather than instantly -- sub-second during the autoregressive
+  /// phase, tens of seconds during flow. Calling it with nothing running is
+  /// harmless and does not affect the next run.
+  void requestCancel() {
+    AudioCppLibrary.instance.audiocpp_cancel_request();
   }
 
   /// Shuts the worker down, releasing every handle it still owns.

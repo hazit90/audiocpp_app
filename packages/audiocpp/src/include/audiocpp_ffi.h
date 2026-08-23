@@ -40,7 +40,7 @@ extern "C" {
 /* Bump the minor on additive changes, the major on breaking ones. The Dart
  * package checks the major matches what its bindings were generated against. */
 #define AUDIOCPP_FFI_ABI_VERSION_MAJOR 1
-#define AUDIOCPP_FFI_ABI_VERSION_MINOR 0
+#define AUDIOCPP_FFI_ABI_VERSION_MINOR 1
 
 /* -------------------------------------------------------------------------- */
 /* Status codes                                                               */
@@ -60,6 +60,9 @@ typedef enum audiocpp_status {
     AUDIOCPP_ERROR_NO_AUDIO_OUTPUT = 5,
     /* Filesystem read/write failed. */
     AUDIOCPP_ERROR_IO = 6,
+    /* The run was stopped by audiocpp_cancel_request(). Not a failure: the
+     * caller asked for it, and the session stays usable for the next run. */
+    AUDIOCPP_CANCELLED = 7,
     /* An exception escaped that we could not classify. */
     AUDIOCPP_ERROR_UNKNOWN = 99
 } audiocpp_status;
@@ -240,6 +243,28 @@ AUDIOCPP_API int32_t /* audiocpp_status */ audiocpp_session_run(
     audiocpp_session * session,
     const audiocpp_request * request,
     audiocpp_audio ** out_audio);
+
+/*
+ * Asks the running generation to stop. Returns AUDIOCPP_OK always; there is
+ * nothing to fail at, and no way to know from here whether a run is in flight.
+ *
+ * Deliberately takes no session. The point of this call is that it is safe from
+ * a thread other than the one blocked inside audiocpp_session_run -- so it
+ * touches no handle, only a process-wide flag. Passing a session pointer would
+ * invite exactly the concurrent handle access the rest of this ABI forbids.
+ *
+ * Consequently it applies to whichever run is in flight, which is sound only
+ * because the engine runs one at a time. Should that ever change, this call
+ * needs a run identity and this comment needs deleting.
+ *
+ * The flag is cleared when a run starts, so calling this with nothing running
+ * does not stop the next one. The stopped run returns AUDIOCPP_CANCELLED, and
+ * the session remains usable.
+ *
+ * Cancellation is honoured between units of work, not instantly: MiniMax Music
+ * 3 checks per AR frame (sub-second) and per flow chunk (tens of seconds).
+ */
+AUDIOCPP_API int32_t /* audiocpp_status */ audiocpp_cancel_request(void);
 
 /* -------------------------------------------------------------------------- */
 /* Audio results                                                              */

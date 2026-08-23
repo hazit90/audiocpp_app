@@ -23,6 +23,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <atomic>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -30,6 +31,24 @@
 #include <vector>
 
 namespace {
+
+// ---------------------------------------------------------------------------
+// Cancellation
+// ---------------------------------------------------------------------------
+
+// Process-wide rather than per-session, and deliberately so.
+//
+// The isolate that calls audiocpp_session_run is blocked inside it for minutes,
+// so the stop request has to arrive from somewhere else entirely. Anything
+// reached through a handle would mean touching that handle concurrently, which
+// is exactly what the rest of this ABI rules out. A flag owned here is the one
+// thing safe to poke from another thread -- and because Dart statics are
+// per-isolate but dlopen is per-process, the UI isolate opening its own
+// bindings still lands on this same object.
+//
+// Sound only while one generation runs at a time, which the engine requires for
+// other reasons anyway.
+std::atomic_bool g_cancel_requested{false};
 
 // ---------------------------------------------------------------------------
 // Error plumbing
@@ -403,6 +422,11 @@ void audiocpp_session_free(audiocpp_session * session) {
     delete session;
 }
 
+int32_t audiocpp_cancel_request(void) {
+    g_cancel_requested.store(true, std::memory_order_relaxed);
+    return AUDIOCPP_OK;
+}
+
 int32_t audiocpp_session_run(
     audiocpp_session * session,
     const audiocpp_request * request,
@@ -424,10 +448,28 @@ int32_t audiocpp_session_run(
             task_request.text_input = std::move(transcript);
         }
 
+        // Cleared here rather than on completion: a cancel that arrives while
+        // nothing is running must not stop whatever starts next.
+        g_cancel_requested.store(false, std::memory_order_relaxed);
+        task_request.cancel = &g_cancel_requested;
+
         // Mirrors audiocpp_cli: prepare() lets the session size its graphs and
         // caches from the request before run() executes.
         session->session->prepare(engine::runtime::build_preparation_request(task_request));
-        auto result = session->offline->run(task_request);
+
+        engine::runtime::TaskResult result;
+        try {
+            result = session->offline->run(task_request);
+        } catch (...) {
+            // Asking the flag rather than matching the exception: the throw
+            // comes from upstream, and coupling this to its type or its wording
+            // would break the first time either is refactored.
+            if (g_cancel_requested.load(std::memory_order_relaxed)) {
+                set_error("run cancelled");
+                return AUDIOCPP_CANCELLED;
+            }
+            throw;
+        }
 
         if (!result.audio_output.has_value()) {
             set_error("session produced no audio output");

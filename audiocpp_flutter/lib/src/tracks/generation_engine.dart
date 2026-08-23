@@ -39,8 +39,29 @@ abstract interface class GenerationEngine {
   ///
   /// Throws on failure rather than reporting through state: the queue has to
   /// attribute the failure to one track and carry on with the next.
+  ///
+  /// Throws [GenerationCancelled] instead if [requestCancel] was called during
+  /// the run.
   Future<GenerationOutcome> runToFile({
     required GenerationParams params,
     required File output,
   });
+
+  /// Asks the run in flight to stop.
+  ///
+  /// Returns immediately and does not wait: the engine honours it between
+  /// units of work, so the run it stops may take a little longer to unwind.
+  /// Safe to call with nothing running.
+  void requestCancel();
+}
+
+/// Raised by [GenerationEngine.runToFile] when the run was stopped on request.
+///
+/// Distinct from a failure so the queue can tell "the user stopped this" from
+/// "this broke", which are two very different things to show in the library.
+final class GenerationCancelled implements Exception {
+  const GenerationCancelled();
+
+  @override
+  String toString() => 'GenerationCancelled';
 }

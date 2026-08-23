@@ -55,6 +55,19 @@ final class AudioCppNativeException extends AudioCppException {
   String toString() => 'AudioCppNativeException(${status.name}): $message';
 }
 
+/// A run was stopped by `AudioCppEngine.requestCancel`.
+///
+/// Its own type rather than an [AudioCppNativeException] with a status to
+/// inspect, because it is not a failure and callers should not have to
+/// re-derive that: a cancelled run is one the caller asked to stop, and the
+/// session it ran on is still usable.
+final class AudioCppCancelledException extends AudioCppException {
+  const AudioCppCancelledException(super.message);
+
+  @override
+  String toString() => 'AudioCppCancelledException: $message';
+}
+
 /// A handle was used after it, or its owner, was disposed.
 final class AudioCppDisposedException extends AudioCppException {
   const AudioCppDisposedException(super.message);

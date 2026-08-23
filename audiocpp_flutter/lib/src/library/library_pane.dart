@@ -201,7 +201,7 @@ class _LibraryPaneState extends State<LibraryPane> {
 /// The tracks waiting their turn, in the order they will run.
 ///
 /// Drag to reorder. Only the queued ones move: the running track cannot be
-/// displaced, because there is no way to stop a generation once it starts.
+/// displaced, because it is already in the engine. Discard stops it instead.
 class _QueueSection extends StatelessWidget {
   const _QueueSection({required this.queue});
 
@@ -403,8 +403,11 @@ class _RunningStrip extends StatelessWidget {
 /// What the engine is doing after the user gave up on it.
 ///
 /// The track itself is gone the moment it is discarded, so nothing here names
-/// it. What is left to report is that the machine is not free yet, which is the
-/// part the user cannot see and would otherwise read as the app hanging.
+/// it. What is left to report is that the machine is not free yet: the engine
+/// checks between units of work rather than mid-step, so a stop lands in
+/// seconds rather than instantly -- and if the run is already past its last
+/// check, it finishes anyway. That gap is invisible from outside and would
+/// otherwise read as the app hanging.
 class _DiscardedStrip extends StatelessWidget {
   const _DiscardedStrip({required this.queue});
 
@@ -430,7 +433,7 @@ class _DiscardedStrip extends StatelessWidget {
             children: <Widget>[
               Expanded(
                 child: Text(
-                  'Discarded',
+                  'Stopping',
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: muted,
                     letterSpacing: 0.6,
@@ -449,10 +452,9 @@ class _DiscardedStrip extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             queue.waitingCount > 0
-                ? 'A generation cannot be interrupted. The next track starts '
-                    'when this one finishes.'
-                : 'A generation cannot be interrupted. The engine is finishing '
-                    'work that will be thrown away.',
+                ? 'The engine stops at the end of the current step. The next '
+                    'track starts then.'
+                : 'The engine stops at the end of the current step.',
             style: theme.textTheme.bodySmall?.copyWith(color: muted),
           ),
           const SizedBox(height: 8),

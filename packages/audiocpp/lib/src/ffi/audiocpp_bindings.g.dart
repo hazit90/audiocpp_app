@@ -252,6 +252,17 @@ class AudioCppBindings {
         )
       >();
 
+  int audiocpp_cancel_request() {
+    return _audiocpp_cancel_request();
+  }
+
+  late final _audiocpp_cancel_requestPtr =
+      _lookup<ffi.NativeFunction<ffi.Int32 Function()>>(
+        'audiocpp_cancel_request',
+      );
+  late final _audiocpp_cancel_request = _audiocpp_cancel_requestPtr
+      .asFunction<int Function()>();
+
   /// -------------------------------------------------------------------------- */
   /// /* Audio results                                                              */
   /// /* --------------------------------------------------------------------------
@@ -362,6 +373,10 @@ enum audiocpp_status {
   /// Filesystem read/write failed.
   AUDIOCPP_ERROR_IO(6),
 
+  /// The run was stopped by audiocpp_cancel_request(). Not a failure: the
+  /// caller asked for it, and the session stays usable for the next run.
+  AUDIOCPP_CANCELLED(7),
+
   /// An exception escaped that we could not classify.
   AUDIOCPP_ERROR_UNKNOWN(99);
 
@@ -376,6 +391,7 @@ enum audiocpp_status {
     4 => AUDIOCPP_ERROR_RUN,
     5 => AUDIOCPP_ERROR_NO_AUDIO_OUTPUT,
     6 => AUDIOCPP_ERROR_IO,
+    7 => AUDIOCPP_CANCELLED,
     99 => AUDIOCPP_ERROR_UNKNOWN,
     _ => throw ArgumentError('Unknown value for audiocpp_status: $value'),
   };
@@ -529,4 +545,4 @@ final class audiocpp_request extends ffi.Struct {
 
 const int AUDIOCPP_FFI_ABI_VERSION_MAJOR = 1;
 
-const int AUDIOCPP_FFI_ABI_VERSION_MINOR = 0;
+const int AUDIOCPP_FFI_ABI_VERSION_MINOR = 1;
