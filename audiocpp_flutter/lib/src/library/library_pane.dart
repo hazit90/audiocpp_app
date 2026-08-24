@@ -781,7 +781,15 @@ class _StatusLine extends StatelessWidget {
           <String>[
             if (track.duration != null) formatDuration(track.duration!),
             'seed ${track.params.seed}',
+            // Steps sit here with the seed because they answer the same
+            // question: what would I have to repeat to get this track back.
+            '${track.params.inferenceSteps} steps',
           ].join(' · '),
+          // A long seed plus steps can outrun the rail at its narrowest, and a
+          // status line that wraps makes every tile in the list a different
+          // height. Truncate instead — Remix carries the exact values anyway.
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: style,
         );
       case TrackStatus.failed:

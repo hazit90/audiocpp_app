@@ -211,6 +211,20 @@ class _CreatePageState extends State<CreatePage> {
     );
   }
 
+  /// What a run with the settings currently in the form would cost.
+  ///
+  /// Read on every rebuild so the number under a slider moves with it. It is
+  /// the queue's own measured estimate, self-correcting after the first run on
+  /// this machine, and it cannot see the weight upload — hence `≈`, and hence
+  /// [_coarseDuration] rounding it rather than reporting seconds it does not
+  /// actually know.
+  Duration? get _estimate {
+    final selected = _selected;
+    return selected == null
+        ? null
+        : widget.queue.estimateFor(_buildParams(), selected.package.id);
+  }
+
   Future<void> _enqueue() async {
     final selected = _selected;
     if (selected == null) {
@@ -292,6 +306,7 @@ class _CreatePageState extends State<CreatePage> {
               guidance: _guidance,
               arGuidance: _arGuidance,
               topK: _topK,
+              estimate: _estimate,
               onOpen: (bool value) => setState(() => _advancedOpen = value),
               onSteps: (int v) => setState(() => _steps = v),
               onSeed: (int v) => setState(() => _seed = v),
@@ -603,6 +618,15 @@ class _LengthCard extends StatelessWidget {
   }
 }
 
+/// Everything under "Advanced controls".
+///
+/// Every row says the same thing twice, on purpose. First what moving it does
+/// to the track you get, then the engine's own term for it underneath, dimmer.
+/// The terms are worth keeping — they are what the model spec, the logs and
+/// audio.cpp's documentation call these, so a term dropped here is a person who
+/// cannot look the parameter up — but on their own they say what a knob *is* and
+/// never whether you want more of it. The badge beside each number does the
+/// third job: where the value sits on its range, which a bare `1.70` cannot say.
 class _AdvancedCard extends StatelessWidget {
   const _AdvancedCard({
     required this.open,
@@ -611,6 +635,7 @@ class _AdvancedCard extends StatelessWidget {
     required this.guidance,
     required this.arGuidance,
     required this.topK,
+    required this.estimate,
     required this.onOpen,
     required this.onSteps,
     required this.onSeed,
@@ -625,6 +650,10 @@ class _AdvancedCard extends StatelessWidget {
   final double guidance;
   final double arGuidance;
   final int topK;
+
+  /// Predicted run time at these settings, when a model is selected.
+  final Duration? estimate;
+
   final ValueChanged<bool> onOpen;
   final ValueChanged<int> onSteps;
   final ValueChanged<int> onSeed;
@@ -635,6 +664,16 @@ class _AdvancedCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final predicted = estimate;
+
+    // The estimate rides the header only while the card is shut. Open, it sits
+    // on the steps row where it belongs — steps are what move it — and showing
+    // it twice a hundred pixels apart just looks like a bug.
+    final summary = <String>[
+      'seed $seed',
+      '$steps steps',
+      if (!open && predicted != null) '≈${_coarseDuration(predicted)}',
+    ].join(' · ');
 
     return Card(
       child: Column(
@@ -648,10 +687,14 @@ class _AdvancedCard extends StatelessWidget {
                   Text('Advanced controls',
                       style: theme.textTheme.titleSmall),
                   const Spacer(),
-                  Text(
-                    'seed $seed · $steps steps',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
+                  Flexible(
+                    child: Text(
+                      summary,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
                   Icon(open ? Icons.expand_less : Icons.expand_more),
@@ -666,53 +709,97 @@ class _AdvancedCard extends StatelessWidget {
                 children: <Widget>[
                   _NumberRow(
                     label: 'Inference steps',
-                    help: 'Flow-matching Euler steps per chunk. Lower is '
-                        'faster and rougher.',
+                    badge: <String>[
+                      _stepsCharacter(steps),
+                      if (predicted != null) '≈${_coarseDuration(predicted)}',
+                    ].join(' · '),
+                    meaning: 'Refinement passes over each chunk of audio. Too '
+                        'few sounds smeared and watery; past roughly 50 the '
+                        'difference stops being audible and you only wait '
+                        'longer.',
+                    detail: 'Flow-matching Euler steps per chunk — the biggest '
+                        'single lever on how long a run takes.',
                     value: steps.toDouble(),
                     min: 4,
                     max: 100,
                     onChanged: (double v) => onSteps(v.round()),
                     format: (double v) => '${v.round()}',
                   ),
-                  Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: Text('Seed  ·  $seed',
-                            style: theme.textTheme.bodyMedium),
-                      ),
-                      TextButton.icon(
-                        onPressed: () =>
-                            onSeed(Random().nextInt(1 << 31)),
-                        icon: const Icon(Icons.casino_outlined, size: 18),
-                        label: const Text('Randomise'),
-                      ),
-                      TextButton(
-                        onPressed: seed == 0 ? null : () => onSeed(0),
-                        child: const Text('Reset'),
-                      ),
-                    ],
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Row(
+                          children: <Widget>[
+                            Expanded(
+                              child: Text('Seed  ·  $seed',
+                                  style: theme.textTheme.bodyMedium),
+                            ),
+                            TextButton.icon(
+                              onPressed: () => onSeed(Random().nextInt(1 << 31)),
+                              icon: const Icon(Icons.casino_outlined, size: 18),
+                              label: const Text('Randomise'),
+                            ),
+                            TextButton(
+                              onPressed: seed == 0 ? null : () => onSeed(0),
+                              child: const Text('Reset'),
+                            ),
+                          ],
+                        ),
+                        const _Explainer(
+                          meaning: 'The same seed with the same prompt and '
+                              'settings gives you the same track every time. '
+                              'Change it for a different take on the same idea, '
+                              'keep it to hear one setting move on its own.',
+                          // Worth stating outright: "Reset" reads like "no seed"
+                          // and it is not one. 0 is a value like any other, and
+                          // the run it produces is as fixed as 12345's.
+                          detail: 'Starting noise for both samplers. 0 is a '
+                              'fixed seed, not a random one.',
+                        ),
+                      ],
+                    ),
                   ),
                   _NumberRow(
                     label: 'Guidance scale',
-                    help: 'Flow transformer CFG. 0 selects the non-CFG path.',
+                    badge: _guidanceCharacter(guidance),
+                    meaning: 'How literally the music follows your '
+                        'description. Low drifts off-prompt and sounds freer; '
+                        'high locks onto it but turns harsh and flat.',
+                    detail: 'Flow transformer CFG. Both branches run whatever '
+                        'it is set to, so moving it costs no extra time.',
                     value: guidance,
-                    min: 0,
+                    // The engine rejects a scale of zero outright ("guidance
+                    // scales must be positive") rather than taking an unguided
+                    // path, so a slider that reaches 0 only offers a run that
+                    // cannot start. The spec's own min of 0.0 disagrees with
+                    // the check in the pipeline; the check is the one that runs.
+                    min: 0.1,
                     max: 5,
                     onChanged: onGuidance,
                     format: (double v) => v.toStringAsFixed(2),
                   ),
                   _NumberRow(
                     label: 'AR guidance scale',
-                    help: 'Semantic/depth AR CFG. 0 selects the non-CFG path.',
+                    badge: _guidanceCharacter(arGuidance),
+                    meaning: 'The same, one stage earlier: how closely the '
+                        'melody and phrasing follow the prompt, before any '
+                        'audio exists to shape.',
+                    detail: 'Semantic and depth AR CFG.',
                     value: arGuidance,
-                    min: 0,
+                    min: 0.1,
                     max: 5,
                     onChanged: onArGuidance,
                     format: (double v) => v.toStringAsFixed(2),
                   ),
                   _NumberRow(
                     label: 'Top-k',
-                    help: 'Sampling bound for semantic and residual codes.',
+                    badge: _topKCharacter(topK),
+                    meaning: 'How many candidates the model may choose between '
+                        'at each step. Low keeps it safe and repetitive; high '
+                        'takes more risks, including bad ones.',
+                    detail: 'Sampling bound for semantic and residual codes.',
                     value: topK.toDouble(),
                     min: 1,
                     max: 200,
@@ -728,10 +815,97 @@ class _AdvancedCard extends StatelessWidget {
   }
 }
 
+/// Where a value sits on its range, in a word.
+///
+/// Ranges rather than thresholds anyone should read as a recommendation: they
+/// are here so a number has a direction, not to hide the number.
+String _stepsCharacter(int steps) {
+  if (steps < 14) {
+    return 'rough';
+  }
+  if (steps < 26) {
+    return 'quick';
+  }
+  if (steps <= 50) {
+    return 'balanced';
+  }
+  return 'diminishing';
+}
+
+String _guidanceCharacter(double scale) {
+  if (scale < 1.0) {
+    return 'loose';
+  }
+  if (scale < 2.2) {
+    return 'balanced';
+  }
+  if (scale < 3.5) {
+    return 'literal';
+  }
+  return 'over-driven';
+}
+
+String _topKCharacter(int topK) {
+  if (topK <= 10) {
+    return 'safe';
+  }
+  if (topK <= 90) {
+    return 'balanced';
+  }
+  return 'adventurous';
+}
+
+/// `≈4 min`, coarse on purpose.
+///
+/// The estimate behind it is measured but incomplete — it cannot see the weight
+/// upload — and `4:07` would claim a precision this does not have. Anything a
+/// person decides with it ("is this a coffee or a lunch") survives rounding.
+String _coarseDuration(Duration duration) {
+  final seconds = duration.inSeconds;
+  if (seconds < 90) {
+    return '${(seconds / 10).round() * 10}s';
+  }
+  final minutes = (seconds / 60).round();
+  return minutes < 60 ? '$minutes min' : '${minutes ~/ 60}h ${minutes % 60}m';
+}
+
+/// A control's two lines: what it does to the music, then what it is called.
+class _Explainer extends StatelessWidget {
+  const _Explainer({required this.meaning, required this.detail});
+
+  final String meaning;
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          meaning,
+          style: theme.textTheme.bodySmall?.copyWith(color: muted),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          detail,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: muted.withValues(alpha: 0.62),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _NumberRow extends StatelessWidget {
   const _NumberRow({
     required this.label,
-    required this.help,
+    required this.badge,
+    required this.meaning,
+    required this.detail,
     required this.value,
     required this.min,
     required this.max,
@@ -740,7 +914,16 @@ class _NumberRow extends StatelessWidget {
   });
 
   final String label;
-  final String help;
+
+  /// Where this value sits, in a word or two — and, for steps, what it costs.
+  final String badge;
+
+  /// What moving the slider does to the track.
+  final String meaning;
+
+  /// What the engine calls it.
+  final String detail;
+
   final double value;
   final double min;
   final double max;
@@ -750,17 +933,33 @@ class _NumberRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // A remixed track can carry a value from outside the range this slider now
+    // offers — the guidance floor moved once already — and a Slider asserts on
+    // one. Clamping shows the nearest legal value and the next drag writes it
+    // back, which is better than the pane failing to build.
+    final position = value.clamp(min, max);
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.only(bottom: 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Row(
             children: <Widget>[
               Expanded(child: Text(label, style: theme.textTheme.bodyMedium)),
+              Flexible(
+                child: Text(
+                  badge,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
               Text(
-                format(value),
+                format(position),
                 style: theme.textTheme.bodyMedium?.copyWith(
                   fontFeatures: const <FontFeature>[
                     FontFeature.tabularFigures(),
@@ -769,13 +968,8 @@ class _NumberRow extends StatelessWidget {
               ),
             ],
           ),
-          Slider(value: value, min: min, max: max, onChanged: onChanged),
-          Text(
-            help,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
+          Slider(value: position, min: min, max: max, onChanged: onChanged),
+          _Explainer(meaning: meaning, detail: detail),
         ],
       ),
     );

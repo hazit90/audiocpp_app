@@ -747,6 +747,69 @@ void main() {
     );
   });
 
+  test('a pause is not billed to the phase it happened in', () async {
+    engine.hold();
+    await add('first', steps: 30);
+    await started(engine);
+
+    // 20s for 100 frames: 200ms each.
+    engine.reportProgress(
+      GenerationPhase.ar,
+      done: 100,
+      total: 750,
+      phaseElapsed: const Duration(seconds: 20),
+    );
+    await ticked();
+    final before = queue.runningEstimatedRemaining;
+    expect(before, isNotNull);
+
+    queue.setRunPaused(true);
+    await Future<void>.delayed(const Duration(milliseconds: 1200));
+    queue.setRunPaused(false);
+
+    // The engine's phase clock keeps running while paused, so the pause shows
+    // up in phaseElapsed. Counting it would make every frame look slower than
+    // it is and inflate what is left by the length of the pause.
+    engine.reportProgress(
+      GenerationPhase.ar,
+      done: 100,
+      total: 750,
+      phaseElapsed: const Duration(seconds: 21, milliseconds: 200),
+    );
+    await ticked();
+
+    final after = queue.runningEstimatedRemaining!;
+    expect(
+      (after - before!).abs(),
+      lessThan(const Duration(seconds: 20)),
+      reason: 'the paused stretch was charged to the phase',
+    );
+
+    engine.release();
+    await drained(queue);
+  });
+
+  test('unit counts are recorded from the engine total, not the last poll',
+      () async {
+    engine.hold();
+    await add('first', steps: 30);
+    await started(engine);
+
+    // A phase is always a poll or so short of its end when it is last seen.
+    // Over two vocoder chunks that gap is the difference between the right
+    // geometry and half of it, which is what predicts every later request.
+    engine.reportProgress(GenerationPhase.ar, done: 246, total: 250);
+    await ticked();
+    engine.reportProgress(GenerationPhase.vocoder, done: 1, total: 2);
+    await ticked();
+    engine.release();
+    await drained(queue);
+
+    final rates = store.readCalibration()['minimax_music3_q4_0']!;
+    expect(rates.sampleArFrames, 250);
+    expect(rates.sampleChunks, 2);
+  });
+
   test('delete removes a track and its audio', () async {
     final track = await add('first');
     await drained(queue);

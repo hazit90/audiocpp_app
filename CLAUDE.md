@@ -239,6 +239,24 @@ across the port, so the no-pointers-across-isolates rule still holds.
 also why progress is polled rather than pushed: a callback would be delivered to
 the isolate blocked inside the run and arrive after the run it described.
 
+**A control says what it does before it says what it is called.** Every row in
+Advanced carries two lines: what moving it does to the track you get, then the
+engine's own term underneath, dimmer. The terms stay — they are what the spec,
+the logs and audio.cpp's docs call these, so dropping one leaves a person unable
+to look the parameter up — but a term alone says what a knob *is* and never
+whether you want more of it. A badge beside the number says where the value
+sits on its range, and the steps row spends the queue's measured estimate
+there: `balanced · ≈3 min`, which is the only quantitative consequence the app
+can state honestly. Rounded coarsely on purpose — that estimate cannot see the
+weight upload, and `4:07` would claim a precision it does not have.
+
+**Both guidance scales are rejected at zero.** `pipeline.cpp` throws "guidance
+scales must be positive" before a run starts, so a slider reaching 0 offers only
+a generation that cannot begin. The model spec's own `min` of 0.0 disagrees with
+that check; the check is the one that runs. The sliders floor at 0.1, and
+nothing in the UI may describe 0 as an unguided path — the flow sampler builds
+both branches whatever the scale is, so there is no cheaper path to select.
+
 **Widgets never touch native handles or block.** Anything long-running goes
 through `GenerationQueue`, which talks to the narrow `GenerationEngine`
 interface. Keep that interface narrow: it is what lets the whole queue be tested

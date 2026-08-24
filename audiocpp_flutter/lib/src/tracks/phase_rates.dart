@@ -137,7 +137,7 @@ final class PhaseRates {
   /// next estimate should not inherit all of it. Unit counts are taken outright
   /// from the newer run: they are structural, not noisy.
   PhaseRates blendedWith(
-    Map<GenerationPhase, ({int units, Duration elapsed})> observed, {
+    Map<GenerationPhase, ({int units, int total, Duration elapsed})> observed, {
     required int durationSeconds,
     double weight = 0.5,
   }) {
@@ -150,8 +150,12 @@ final class PhaseRates {
       return current * (1 - weight) + measured * weight;
     }
 
-    final arUnits = observed[GenerationPhase.ar]?.units ?? 0;
-    final chunks = observed[GenerationPhase.vocoder]?.units ?? 0;
+    // Geometry comes from the engine's totals, never from the last position
+    // polled: a phase is always a unit or so past its last reading when it
+    // ends, which is noise across thousands of AR frames and a factor of two
+    // across two vocoder chunks.
+    final arUnits = observed[GenerationPhase.ar]?.total ?? 0;
+    final chunks = observed[GenerationPhase.vocoder]?.total ?? 0;
     return PhaseRates(
       arMsPerFrame: fold(GenerationPhase.ar, arMsPerFrame),
       flowMsPerEval: fold(GenerationPhase.flow, flowMsPerEval),

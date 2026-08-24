@@ -112,8 +112,14 @@ final class GenerationQueue extends ChangeNotifier {
   final Map<GenerationPhase, int> _liveTotals = <GenerationPhase, int>{};
 
   /// What each finished phase of this run actually cost.
-  final Map<GenerationPhase, ({int units, Duration elapsed})> _observed =
-      <GenerationPhase, ({int units, Duration elapsed})>{};
+  ///
+  /// [units] and [elapsed] are a consistent pair taken from one reading, which
+  /// is what a rate needs. [total] is the engine's own count for the phase and
+  /// is what its geometry needs -- the last reading is always a unit or so
+  /// short of the end, which barely matters over thousands of AR frames and
+  /// badly matters over two vocoder chunks.
+  final Map<GenerationPhase, ({int units, int total, Duration elapsed})>
+      _observed = <GenerationPhase, ({int units, int total, Duration elapsed})>{};
 
   /// Paused time already banked when the current phase began, so a pause is
   /// not billed to the phase it happened in.
@@ -289,7 +295,7 @@ final class GenerationQueue extends ChangeNotifier {
     var total = runningEstimatedRemaining ?? Duration.zero;
     for (final track in pending) {
       if (track.status == TrackStatus.queued) {
-        total += _estimateFor(track.params, track.modelPackageId);
+        total += estimateFor(track.params, track.modelPackageId);
       }
     }
     return total;
@@ -575,6 +581,7 @@ final class GenerationQueue extends ChangeNotifier {
       if (last != null && last.isReporting && last.done > 0) {
         _observed[last.phase] = (
           units: last.done,
+          total: last.total,
           elapsed: last.phaseElapsed - (_pausedSoFar() - _pausedAtPhaseStart),
         );
       }
@@ -711,7 +718,14 @@ final class GenerationQueue extends ChangeNotifier {
     return elapsed.inMilliseconds / snapshot.done;
   }
 
-  Duration _estimateFor(GenerationParams params, String packageId) =>
+  /// What [params] would cost on [packageId], from the same measured rates the
+  /// running bar uses.
+  ///
+  /// Public because a setting is worth pricing before it is committed to: the
+  /// Create pane reads this while a slider moves. Short of the truth by the
+  /// weight upload, which reports no phase and so cannot be predicted -- show
+  /// it as an approximation, never as a countdown.
+  Duration estimateFor(GenerationParams params, String packageId) =>
       _ratesFor(packageId).predictedTotal(params);
 
   /// Reads the engine's position and folds it into the bar and the estimate.
@@ -743,6 +757,7 @@ final class GenerationQueue extends ChangeNotifier {
       // truth, against a phase that ran for minutes.
       _observed[previous.phase] = (
         units: previous.done,
+        total: previous.total,
         elapsed: previous.phaseElapsed - (_pausedSoFar() - _pausedAtPhaseStart),
       );
       _pausedAtPhaseStart = _pausedSoFar();
