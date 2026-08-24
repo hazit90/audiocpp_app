@@ -30,7 +30,7 @@ OUTPUT_DIR="${PACKAGE_DIR}/ios/Frameworks"
 XCFRAMEWORK="${OUTPUT_DIR}/audiocpp.xcframework"
 
 BUILD_TYPE="${BUILD_TYPE:-Release}"
-AUDIOCPP_MODELS="${AUDIOCPP_MODELS:-minimax_music3}"
+AUDIOCPP_MODELS="${AUDIOCPP_MODELS:-minimax_music3;stable_audio}"
 # audio.cpp calls std::to_chars on floats (src/framework/debug/trace.cpp). libc++
 # only exposes that overload from iOS 16.3 -- the same libc++ release that gates
 # the macOS build to 13.3. The app's IPHONEOS_DEPLOYMENT_TARGET and the Podfile's

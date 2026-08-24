@@ -22,7 +22,7 @@ BUILD_DIR="${PACKAGE_DIR}/build/macos"
 OUTPUT_DIR="${PACKAGE_DIR}/macos/Libs"
 
 BUILD_TYPE="${BUILD_TYPE:-Release}"
-AUDIOCPP_MODELS="${AUDIOCPP_MODELS:-minimax_music3}"
+AUDIOCPP_MODELS="${AUDIOCPP_MODELS:-minimax_music3;stable_audio}"
 # audio.cpp calls std::to_chars on floats (src/framework/debug/trace.cpp), which
 # libc++ only exposes from macOS 13.3. Anything lower fails to compile, and the
 # host app's own deployment target must be at least this high to link the dylib.

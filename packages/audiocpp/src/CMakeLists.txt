@@ -30,7 +30,7 @@ endif()
 # Only link the model families we actually ship. `full` compiles all ~50, which
 # costs build time and binary size we have no use for.
 set(AUDIOCPP_MODEL_SET "custom" CACHE STRING "audio.cpp model composite")
-set(AUDIOCPP_MODELS "minimax_music3" CACHE STRING "audio.cpp model targets")
+set(AUDIOCPP_MODELS "minimax_music3;stable_audio" CACHE STRING "audio.cpp model targets")
 
 # Compile model_specs/*.json into the runtime. Without this the engine resolves
 # specs by walking up from the model directory and the process cwd -- neither of

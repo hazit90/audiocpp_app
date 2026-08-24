@@ -554,7 +554,7 @@ final class GenerationQueue extends ChangeNotifier {
     _notify();
 
     try {
-      await _ensureModelLoaded(track.modelPackageId);
+      await _ensureModelLoaded(track.modelPackageId, track.params.family);
 
       // A discard during the model load is aimed at this run, but the engine
       // clears its own flag when a run starts -- deliberately, so a stale
@@ -666,7 +666,7 @@ final class GenerationQueue extends ChangeNotifier {
   }
 
   /// Loads the package this track needs, unless it is already resident.
-  Future<void> _ensureModelLoaded(String packageId) async {
+  Future<void> _ensureModelLoaded(String packageId, String family) async {
     final path = await resolveModelPath(packageId);
     if (path == null || path.isEmpty) {
       throw StateError(
@@ -677,7 +677,7 @@ final class GenerationQueue extends ChangeNotifier {
     if (engine.loadedModelPath == path) {
       return;
     }
-    await engine.loadModel(path);
+    await engine.loadModel(path, family: family);
     if (engine.loadedModelPath != path) {
       throw StateError(engine.errorMessage ?? 'Could not load $packageId.');
     }

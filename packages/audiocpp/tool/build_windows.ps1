@@ -28,7 +28,7 @@ param(
     [ValidateSet('Release', 'Debug', 'RelWithDebInfo')]
     [string] $BuildType = $(if ($env:BUILD_TYPE) { $env:BUILD_TYPE } else { 'Release' }),
 
-    [string] $Models = $(if ($env:AUDIOCPP_MODELS) { $env:AUDIOCPP_MODELS } else { 'minimax_music3' }),
+    [string] $Models = $(if ($env:AUDIOCPP_MODELS) { $env:AUDIOCPP_MODELS } else { 'minimax_music3;stable_audio' }),
 
     [int] $Jobs = $(if ($env:JOBS) { [int]$env:JOBS } else { [Environment]::ProcessorCount }),
 

@@ -54,7 +54,7 @@ class MusicGenerationController extends ChangeNotifier
   /// Replaces whatever was loaded before, releasing it first so two copies of a
   /// multi-gigabyte model are never resident at once.
   @override
-  Future<void> loadModel(String modelPath) async {
+  Future<void> loadModel(String modelPath, {required String family}) async {
     await initialise();
     final engine = _engine;
     if (engine == null) {
@@ -68,11 +68,11 @@ class MusicGenerationController extends ChangeNotifier
       final model = await engine.loadModel(
         ModelDescriptor(
           path: modelPath,
-          family: MiniMaxMusic3Request.family,
+          family: family,
         ),
       );
 
-      if (!model.supportsTask(MiniMaxMusic3Request.task)) {
+      if (!model.supportsTask(_taskFor(family))) {
         await model.dispose();
         throw StateError(
           'Model at $modelPath reports family "${model.family}" which does not '
@@ -83,7 +83,7 @@ class MusicGenerationController extends ChangeNotifier
       _model = model;
       _session = await model.createSession(
         SessionConfig(
-          task: MiniMaxMusic3Request.task,
+          task: _taskFor(family),
           backend: _preferredBackend,
           threads: _preferredThreadCount,
         ),
@@ -93,6 +93,19 @@ class MusicGenerationController extends ChangeNotifier
     } on Object catch (error) {
       await _releaseModel();
       _fail(error);
+    }
+  }
+
+  /// Task a family runs under. Both supported families are audio generation,
+  /// but reading it off the family rather than assuming keeps the next one
+  /// from silently inheriting the wrong task.
+  static AudioCppTask _taskFor(String family) {
+    switch (family) {
+      case StableAudio3Request.family:
+        return StableAudio3Request.task;
+      case MiniMaxMusic3Request.family:
+      default:
+        return MiniMaxMusic3Request.task;
     }
   }
 

@@ -24,6 +24,7 @@ export 'src/exceptions.dart'
         AudioCppLibraryNotFoundException,
         AudioCppNativeException;
 export 'src/requests/minimax_music3.dart' show MiniMaxMusic3Request;
+export 'src/requests/stable_audio.dart' show StableAudio3Request;
 export 'src/types.dart'
     show
         AudioCppBackend,

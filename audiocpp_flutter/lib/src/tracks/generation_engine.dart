@@ -34,7 +34,11 @@ abstract interface class GenerationEngine {
   String? get errorMessage;
 
   /// Makes [modelPath] resident, replacing whatever was loaded before.
-  Future<void> loadModel(String modelPath);
+  ///
+  /// [family] is the registry family the package belongs to. It is passed in
+  /// rather than sniffed from the files because the registry takes it as a
+  /// hint, and the track already knows which family it was built for.
+  Future<void> loadModel(String modelPath, {required String family});
 
   /// Runs one request to completion, writing a WAV to [output].
   ///

@@ -1,6 +1,6 @@
 import 'dart:math';
 
-import 'package:audiocpp/audiocpp.dart' show ModelSpec;
+import 'package:audiocpp/audiocpp.dart' show MiniMaxMusic3Request, ModelSpec;
 import 'package:flutter/material.dart';
 
 import '../models/model_library_controller.dart';
@@ -57,6 +57,9 @@ class _CreatePageState extends State<CreatePage> {
         '[chorus] Turn it up and let it fly. Sing the melody tonight.',
   );
 
+  /// Only shown for families whose spec declares `negative_prompt`.
+  final TextEditingController _negative = TextEditingController();
+
   final Set<String> _tags = <String>{};
   LyricsMode _lyricsMode = LyricsMode.custom;
   int _tab = 0;
@@ -70,6 +73,14 @@ class _CreatePageState extends State<CreatePage> {
   bool _advancedOpen = false;
 
   String? _packageId;
+
+  /// Family whose spec defaults are currently loaded into the controls.
+  ///
+  /// The families disagree on what a sensible run looks like — 30 flow steps
+  /// against 8 diffusion steps, guidance 1.7 against 1.0 — so leaving one
+  /// family's numbers in the form after switching to the other produces a run
+  /// that is either needlessly slow or visibly wrong.
+  String? _defaultsFamily;
 
   @override
   void initState() {
@@ -106,6 +117,10 @@ class _CreatePageState extends State<CreatePage> {
     setState(() {
       _describe.text = params.caption;
       _lyrics.text = params.lyrics;
+      _negative.text = params.negativePrompt;
+      // The remix carries its own family, so the defaults sync must not then
+      // overwrite the very numbers being restored.
+      _defaultsFamily = params.family;
       _lyricsMode = params.isInstrumental
           ? LyricsMode.instrumental
           : LyricsMode.custom;
@@ -128,6 +143,7 @@ class _CreatePageState extends State<CreatePage> {
     widget.models.removeListener(_onChanged);
     _describe.dispose();
     _lyrics.dispose();
+    _negative.dispose();
     super.dispose();
   }
 
@@ -164,6 +180,24 @@ class _CreatePageState extends State<CreatePage> {
         : widget.models.catalog.specForPackage(selected.package.id);
   }
 
+  /// Registry family of the selected package.
+  String get _family => _spec?.family ?? MiniMaxMusic3Request.family;
+
+  /// Whether this family has any lyrics input at all.
+  ///
+  /// Distinct from [_lyricsRequired]: Stable Audio has no lyrics conditioning
+  /// whatsoever, so the card is not merely optional for it, it is meaningless.
+  /// A spec that declares no `lyrics` option gets no lyrics card.
+  bool get _lyricsSupported => _spec?.options.findRequest('lyrics') != null;
+
+  /// True when the spec declares [name] as a request option.
+  ///
+  /// Every optional control in Advanced is gated on this rather than on the
+  /// family name: the parameters genuinely differ between families, and the
+  /// engine silently ignores an option it does not know, so a slider for one
+  /// it never reads would move and change nothing.
+  bool _declares(String name) => _spec?.options.findRequest(name) != null;
+
   /// Whether the selected model can only sing, never play instrumentally.
   ///
   /// Read from the spec rather than hardcoded: MiniMax Music 3 declares
@@ -177,7 +211,8 @@ class _CreatePageState extends State<CreatePage> {
     if (_selected == null) {
       return 'Install a model first';
     }
-    if (_effectiveLyricsMode == LyricsMode.custom &&
+    if (_lyricsSupported &&
+        _effectiveLyricsMode == LyricsMode.custom &&
         _lyrics.text.trim().isEmpty) {
       return _lyricsRequired
           ? 'This model needs lyrics'
@@ -195,12 +230,45 @@ class _CreatePageState extends State<CreatePage> {
   LyricsMode get _effectiveLyricsMode =>
       _lyricsRequired ? LyricsMode.custom : _lyricsMode;
 
+  /// Loads the selected family's own defaults into the controls.
+  ///
+  /// Duration is deliberately left alone: it is the one control with its own
+  /// card and a meaning the user set on purpose, and MiniMax's spec default of
+  /// 20s would silently undo that choice every time the model changed.
+  void _applySpecDefaults() {
+    final spec = _spec;
+    if (spec == null) {
+      return;
+    }
+
+    int? asInt(String name) {
+      final raw = spec.options.findRequest(name)?.defaultValue;
+      return raw == null ? null : int.tryParse(raw);
+    }
+
+    double? asDouble(String name) {
+      final raw = spec.options.findRequest(name)?.defaultValue;
+      return raw == null ? null : double.tryParse(raw);
+    }
+
+    setState(() {
+      _defaultsFamily = spec.family;
+      _steps = asInt('num_inference_steps') ?? _steps;
+      _guidance = asDouble('guidance_scale') ?? _guidance;
+      _arGuidance = asDouble('ar_guidance_scale') ?? _arGuidance;
+      _topK = asInt('top_k') ?? _topK;
+    });
+  }
+
   GenerationParams _buildParams() {
     return GenerationParams(
       caption: composeCaption(described: _describe.text, tags: _tags.toList()),
-      lyrics: _effectiveLyricsMode == LyricsMode.instrumental
-          ? ''
-          : _lyrics.text.trim(),
+      family: _family,
+      negativePrompt: _negative.text.trim(),
+      lyrics:
+          !_lyricsSupported || _effectiveLyricsMode == LyricsMode.instrumental
+              ? ''
+              : _lyrics.text.trim(),
       durationSeconds: _durationSeconds,
       inferenceSteps: _steps,
       guidanceScale: _guidance,
@@ -261,6 +329,17 @@ class _CreatePageState extends State<CreatePage> {
       return _FirstRun(onBrowse: widget.onBrowseModels);
     }
 
+    // Deferred for the same reason _applyRemix is: it calls setState, and this
+    // is reached from build.
+    final spec = _spec;
+    if (spec != null && spec.family != _defaultsFamily) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _spec?.family != _defaultsFamily) {
+          _applySpecDefaults();
+        }
+      });
+    }
+
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 620),
@@ -284,14 +363,23 @@ class _CreatePageState extends State<CreatePage> {
               selected: _selected,
               onSelected: (String id) => setState(() => _packageId = id),
             ),
-            const SizedBox(height: AppTheme.gap),
-            _LyricsCard(
-              mode: _effectiveLyricsMode,
-              controller: _lyrics,
-              required: _lyricsRequired,
-              onMode: (LyricsMode mode) => setState(() => _lyricsMode = mode),
-              onChanged: () => setState(() {}),
-            ),
+            if (_lyricsSupported) ...<Widget>[
+              const SizedBox(height: AppTheme.gap),
+              _LyricsCard(
+                mode: _effectiveLyricsMode,
+                controller: _lyrics,
+                required: _lyricsRequired,
+                onMode: (LyricsMode mode) => setState(() => _lyricsMode = mode),
+                onChanged: () => setState(() {}),
+              ),
+            ],
+            if (_declares('negative_prompt')) ...<Widget>[
+              const SizedBox(height: AppTheme.gap),
+              _NegativePromptCard(
+                controller: _negative,
+                onChanged: () => setState(() {}),
+              ),
+            ],
             const SizedBox(height: AppTheme.gap),
             _LengthCard(
               seconds: _durationSeconds,
@@ -301,6 +389,8 @@ class _CreatePageState extends State<CreatePage> {
             const SizedBox(height: AppTheme.gap),
             _AdvancedCard(
               open: _advancedOpen,
+              showArGuidance: _declares('ar_guidance_scale'),
+              showTopK: _declares('top_k'),
               steps: _steps,
               seed: _seed,
               guidance: _guidance,
@@ -321,6 +411,66 @@ class _CreatePageState extends State<CreatePage> {
               waiting: widget.queue.waitingCount,
               wait: widget.queue.estimatedWait,
               onPressed: _enqueue,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// What the track should avoid, for families that take a negative prompt.
+///
+/// Its own card rather than a second field in the prompt card: it is optional,
+/// most families do not have one, and putting it under the caption would imply
+/// it is part of the description rather than the opposite of it.
+class _NegativePromptCard extends StatelessWidget {
+  const _NegativePromptCard({
+    required this.controller,
+    required this.onChanged,
+  });
+
+  final TextEditingController controller;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Text('AVOID', style: theme.textTheme.labelSmall),
+                const SizedBox(width: 8),
+                Text(
+                  '· optional',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: controller,
+              onChanged: (_) => onChanged(),
+              minLines: 2,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                hintText: 'distorted, lo-fi, vocals',
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Sounds and styles to steer away from. Leave it empty and no '
+              'negative prompt is sent at all.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ],
         ),
@@ -630,6 +780,8 @@ class _LengthCard extends StatelessWidget {
 class _AdvancedCard extends StatelessWidget {
   const _AdvancedCard({
     required this.open,
+    required this.showArGuidance,
+    required this.showTopK,
     required this.steps,
     required this.seed,
     required this.guidance,
@@ -645,6 +797,12 @@ class _AdvancedCard extends StatelessWidget {
   });
 
   final bool open;
+
+  /// Both rows are MiniMax-only. Stable Audio is a single diffusion pass with
+  /// no autoregressive stage, so there is nothing for either to steer.
+  final bool showArGuidance;
+  final bool showTopK;
+
   final int steps;
   final int seed;
   final double guidance;
@@ -717,8 +875,11 @@ class _AdvancedCard extends StatelessWidget {
                         'few sounds smeared and watery; past roughly 50 the '
                         'difference stops being audible and you only wait '
                         'longer.',
-                    detail: 'Flow-matching Euler steps per chunk — the biggest '
-                        'single lever on how long a run takes.',
+                    detail: showArGuidance
+                        ? 'Flow-matching Euler steps per chunk — the biggest '
+                            'single lever on how long a run takes.'
+                        : 'Rectified-flow diffusion steps — the biggest single '
+                            'lever on how long a run takes.',
                     value: steps.toDouble(),
                     min: 4,
                     max: 100,
@@ -780,32 +941,35 @@ class _AdvancedCard extends StatelessWidget {
                     onChanged: onGuidance,
                     format: (double v) => v.toStringAsFixed(2),
                   ),
-                  _NumberRow(
-                    label: 'AR guidance scale',
-                    badge: _guidanceCharacter(arGuidance),
-                    meaning: 'The same, one stage earlier: how closely the '
-                        'melody and phrasing follow the prompt, before any '
-                        'audio exists to shape.',
-                    detail: 'Semantic and depth AR CFG.',
-                    value: arGuidance,
-                    min: 0.1,
-                    max: 5,
-                    onChanged: onArGuidance,
-                    format: (double v) => v.toStringAsFixed(2),
-                  ),
-                  _NumberRow(
-                    label: 'Top-k',
-                    badge: _topKCharacter(topK),
-                    meaning: 'How many candidates the model may choose between '
-                        'at each step. Low keeps it safe and repetitive; high '
-                        'takes more risks, including bad ones.',
-                    detail: 'Sampling bound for semantic and residual codes.',
-                    value: topK.toDouble(),
-                    min: 1,
-                    max: 200,
-                    onChanged: (double v) => onTopK(v.round()),
-                    format: (double v) => '${v.round()}',
-                  ),
+                  if (showArGuidance)
+                    _NumberRow(
+                      label: 'AR guidance scale',
+                      badge: _guidanceCharacter(arGuidance),
+                      meaning: 'The same, one stage earlier: how closely the '
+                          'melody and phrasing follow the prompt, before any '
+                          'audio exists to shape.',
+                      detail: 'Semantic and depth AR CFG.',
+                      value: arGuidance,
+                      min: 0.1,
+                      max: 5,
+                      onChanged: onArGuidance,
+                      format: (double v) => v.toStringAsFixed(2),
+                    ),
+                  if (showTopK)
+                    _NumberRow(
+                      label: 'Top-k',
+                      badge: _topKCharacter(topK),
+                      meaning: 'How many candidates the model may choose '
+                          'between at each step. Low keeps it safe and '
+                          'repetitive; high takes more risks, including bad '
+                          'ones.',
+                      detail: 'Sampling bound for semantic and residual codes.',
+                      value: topK.toDouble(),
+                      min: 1,
+                      max: 200,
+                      onChanged: (double v) => onTopK(v.round()),
+                      format: (double v) => '${v.round()}',
+                    ),
                 ],
               ),
             ),

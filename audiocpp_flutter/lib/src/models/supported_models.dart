@@ -10,12 +10,13 @@
 ///     means changing all of them;
 ///  2. its spec is present in `assets/model_specs/`, copied by hand from
 ///     `third_party/audio.cpp/model_specs/`;
-///  3. the Create pane knows how to build its request — today that is
-///     `MiniMaxMusic3Request` and nothing else.
+///  3. the Create pane knows how to build its request — today
+///     `MiniMaxMusic3Request` and `StableAudio3Request`.
 ///
 /// Adding a family means doing all three, not just this list. Until then it is
 /// not offered for download: a 14 GB download for something that cannot load is
 /// worse than not showing it at all.
 const Set<String> kSupportedFamilies = <String>{
   'minimax_music3',
+  'stable_audio',
 };

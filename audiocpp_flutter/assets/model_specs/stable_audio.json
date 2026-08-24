@@ -1,0 +1,188 @@
+{
+  "family": "stable_audio",
+  "display_name": "Stable Audio 3 Small Music",
+  "description": "Stability AI text-to-music model. Generates instrumental music from a prompt; it has no lyrics or vocal conditioning.",
+  "category": "audio_generation",
+  "status": "supported",
+  "tasks": [
+    "music"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en"
+  ],
+  "capabilities": {
+    "music": [
+      "prompt_generation",
+      "style_control"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "negative_prompt",
+        "type": "string",
+        "required": false,
+        "description": "Sounds or styles to steer away from.",
+        "default": ""
+      },
+      {
+        "name": "duration_seconds",
+        "type": "float",
+        "required": false,
+        "description": "Target duration in seconds. The model generates past it and trims back, so this is a real target rather than a budget.",
+        "min": 1.0,
+        "max": 120.0,
+        "default": 30.0
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "required": false,
+        "description": "Rectified-flow diffusion steps.",
+        "min": 1,
+        "max": 100,
+        "default": 8
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "required": false,
+        "description": "Classifier-free guidance scale.",
+        "min": 0.1,
+        "max": 15.0,
+        "default": 1.0
+      },
+      {
+        "name": "sampler",
+        "type": "enum",
+        "required": false,
+        "description": "Diffusion sampler. The DPM++ samplers are only accepted by the medium package.",
+        "values": [
+          "pingpong",
+          "euler",
+          "dpmpp-2m",
+          "dpmpp-3m-sde"
+        ],
+        "default": "pingpong"
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "required": false,
+        "description": "Generation seed.",
+        "min": 0,
+        "default": 0
+      }
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "stable_audio_3_small_music_q8_0",
+      "display_name": "Stable Audio 3 Small Music Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Stable-Audio-3-Small-Music-GGUF",
+      "files": [
+        "Stable-Audio-3-Small-Music-GGUF/stable-audio-3-small-music-q8_0.gguf"
+      ],
+      "strip_prefix": "Stable-Audio-3-Small-Music-GGUF"
+    },
+    {
+      "id": "stable_audio_3_small_music_f16",
+      "display_name": "Stable Audio 3 Small Music F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Stable-Audio-3-Small-Music-GGUF",
+      "files": [
+        "Stable-Audio-3-Small-Music-GGUF/stable-audio-3-small-music-f16.gguf"
+      ],
+      "strip_prefix": "Stable-Audio-3-Small-Music-GGUF"
+    }
+  ],
+  "ui": {
+    "recommended_package": "stable_audio_3_small_music_q8_0",
+    "tags": [
+      "Music",
+      "Instrumental",
+      "GGUF"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "model_config": "model:model_config.json",
+        "t5_config": "model:t5gemma-b-b-ul2/config.json",
+        "t5_tokenizer_json": "model:t5gemma-b-b-ul2/tokenizer.json",
+        "t5_tokenizer_model": "model:t5gemma-b-b-ul2/tokenizer.model",
+        "t5_tokenizer_config": "model:t5gemma-b-b-ul2/tokenizer_config.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model_weights"
+        },
+        "t5_weights": {
+          "source": "weights:",
+          "prefix": "t5_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "t5": "t5gemma-b-b-ul2"
+      },
+      "files": {
+        "model_config": "model:model_config.json",
+        "t5_config": "t5:config.json",
+        "t5_tokenizer_json": "t5:tokenizer.json",
+        "t5_tokenizer_model": "t5:tokenizer.model",
+        "t5_tokenizer_config": "t5:tokenizer_config.json"
+      },
+      "tensors": {
+        "model_weights": "model:model.safetensors",
+        "t5_weights": "t5:model.safetensors"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": ".",
+        "t5": "../t5-base"
+      },
+      "files": {
+        "model_config": "model:model_config.json",
+        "t5_config": "t5:config.json",
+        "t5_tokenizer_json": "t5:tokenizer.json",
+        "t5_tokenizer_model": "t5:spiece.model",
+        "t5_tokenizer_config": "t5:config.json"
+      },
+      "tensors": {
+        "model_weights": "model:Foundation_1.safetensors",
+        "t5_weights": "t5:model.safetensors"
+      }
+    }
+  ]
+}

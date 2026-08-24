@@ -26,6 +26,8 @@ final class GenerationParams {
   const GenerationParams({
     required this.caption,
     required this.lyrics,
+    this.family = MiniMaxMusic3Request.family,
+    this.negativePrompt = '',
     this.durationSeconds = 30,
     this.inferenceSteps = 30,
     this.guidanceScale = 1.7,
@@ -39,6 +41,10 @@ final class GenerationParams {
     return GenerationParams(
       caption: json['caption'] as String? ?? '',
       lyrics: json['lyrics'] as String? ?? '',
+      // Absent in tracks written before a second family existed, and every one
+      // of those was MiniMax Music 3.
+      family: json['family'] as String? ?? MiniMaxMusic3Request.family,
+      negativePrompt: json['negative_prompt'] as String? ?? '',
       durationSeconds: (json['duration_seconds'] as num?)?.toInt() ?? 30,
       inferenceSteps: (json['inference_steps'] as num?)?.toInt() ?? 30,
       guidanceScale: (json['guidance_scale'] as num?)?.toDouble() ?? 1.7,
@@ -51,11 +57,23 @@ final class GenerationParams {
     );
   }
 
+  /// Which model family these params are for.
+  ///
+  /// Carried on the params rather than looked up from the package id because a
+  /// track outlives the catalog: the package can be deleted, and a failed track
+  /// still has to say what it was trying to run.
+  final String family;
+
   /// Style caption. Sent as the session's text input.
   final String caption;
 
-  /// Lyrics to sing; empty means an instrumental.
+  /// Lyrics to sing; empty means an instrumental. Ignored by families with no
+  /// lyrics conditioning, which is every family except MiniMax Music 3.
   final String lyrics;
+
+  /// What to steer away from. Stable Audio only; MiniMax Music 3 has no
+  /// negative prompt.
+  final String negativePrompt;
 
   final int durationSeconds;
   final int inferenceSteps;
@@ -71,20 +89,43 @@ final class GenerationParams {
   bool get isInstrumental => lyrics.trim().isEmpty;
 
   /// The typed request this describes.
-  MiniMaxMusic3Request toRequest() => MiniMaxMusic3Request(
-        caption: caption,
-        lyrics: lyrics,
-        durationSeconds: durationSeconds,
-        inferenceSteps: inferenceSteps,
-        guidanceScale: guidanceScale,
-        arGuidanceScale: arGuidanceScale,
-        topK: topK,
-        seed: seed,
-      );
+  ///
+  /// The families do not share a parameter set -- Stable Audio has no lyrics,
+  /// no AR guidance and no top-k, and takes a negative prompt instead -- so the
+  /// fields that do not apply are simply not passed. Keeping one params type
+  /// rather than a hierarchy is deliberate: the store persists exactly one
+  /// shape, and a track from either family stays comparable in the library.
+  InferenceRequest toRequest() {
+    switch (family) {
+      case StableAudio3Request.family:
+        return StableAudio3Request(
+          prompt: caption,
+          negativePrompt: negativePrompt,
+          durationSeconds: durationSeconds,
+          inferenceSteps: inferenceSteps,
+          guidanceScale: guidanceScale,
+          seed: seed,
+        );
+      case MiniMaxMusic3Request.family:
+      default:
+        return MiniMaxMusic3Request(
+          caption: caption,
+          lyrics: lyrics,
+          durationSeconds: durationSeconds,
+          inferenceSteps: inferenceSteps,
+          guidanceScale: guidanceScale,
+          arGuidanceScale: arGuidanceScale,
+          topK: topK,
+          seed: seed,
+        );
+    }
+  }
 
   GenerationParams copyWith({
     String? caption,
     String? lyrics,
+    String? family,
+    String? negativePrompt,
     int? durationSeconds,
     int? inferenceSteps,
     double? guidanceScale,
@@ -96,6 +137,8 @@ final class GenerationParams {
     return GenerationParams(
       caption: caption ?? this.caption,
       lyrics: lyrics ?? this.lyrics,
+      family: family ?? this.family,
+      negativePrompt: negativePrompt ?? this.negativePrompt,
       durationSeconds: durationSeconds ?? this.durationSeconds,
       inferenceSteps: inferenceSteps ?? this.inferenceSteps,
       guidanceScale: guidanceScale ?? this.guidanceScale,
@@ -109,6 +152,8 @@ final class GenerationParams {
   Map<String, Object?> toJson() => <String, Object?>{
         'caption': caption,
         'lyrics': lyrics,
+        'family': family,
+        'negative_prompt': negativePrompt,
         'duration_seconds': durationSeconds,
         'inference_steps': inferenceSteps,
         'guidance_scale': guidanceScale,

@@ -128,6 +128,52 @@ void main() {
   }
 
 
+  test('the track\'s family reaches the engine, not a hardcoded one', () async {
+    // Two families can be installed at once, and the registry takes the family
+    // as a load hint. Loading a Stable Audio package as minimax_music3 fails in
+    // a way that reads like a corrupt download.
+    await queue.enqueue(
+      params: const GenerationParams(
+        caption: 'uplifting house music',
+        lyrics: '',
+        family: 'stable_audio',
+      ),
+      modelPackageId: 'stable_audio_3_small_music_q8_0',
+      title: 'house',
+    );
+    await drained(queue);
+
+    expect(engine.loadedFamilies, <String>['stable_audio']);
+  });
+
+  test('a track with no recorded family still loads as MiniMax', () async {
+    // Everything written before a second family existed omits the field.
+    final params = GenerationParams.fromJson(<String, Object?>{
+      'caption': 'old track',
+      'lyrics': 'la la',
+    });
+
+    expect(params.family, 'minimax_music3');
+    expect(params.toRequest(), isA<MiniMaxMusic3Request>());
+  });
+
+  test('params build the request their family calls for', () async {
+    const stable = GenerationParams(
+      caption: 'ambient drone',
+      lyrics: 'ignored',
+      family: 'stable_audio',
+      negativePrompt: 'vocals',
+      inferenceSteps: 8,
+    );
+
+    final request = stable.toRequest();
+    expect(request, isA<StableAudio3Request>());
+    // The lyrics field is carried on the params but must not reach an engine
+    // that has no lyrics input.
+    expect(request.options.containsKey('lyrics'), isFalse);
+    expect(request.options['negative_prompt'], 'vocals');
+  });
+
   test('enqueue returns immediately and the track lands as queued', () async {
     engine.hold();
     final track = await add('first');

@@ -91,9 +91,15 @@ final class FakeEngine implements GenerationEngine {
     _loadGate = null;
   }
 
+  /// Families the fake was asked to load, parallel to [loads]. Lets a test
+  /// assert that a track's family reaches the engine, which is the only thing
+  /// standing between a Stable Audio track and being loaded as MiniMax.
+  final List<String> loadedFamilies = <String>[];
+
   @override
-  Future<void> loadModel(String modelPath) async {
+  Future<void> loadModel(String modelPath, {required String family}) async {
     loads.add(modelPath);
+    loadedFamilies.add(family);
     final gate = _loadGate;
     if (gate != null) {
       await gate.future;
